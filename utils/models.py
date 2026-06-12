@@ -54,6 +54,34 @@ _GENERATION_DELAY_RANGE = (2.0, 3.5)
 # Cap working resolution to keep base64 payloads in the JSON DB lightweight.
 _MAX_SIDE_PX = 1024
 
+# ---------------------------------------------------------------------------
+# Local Computer Vision pipeline (OpenCV + YOLOv8) configuration.
+# ---------------------------------------------------------------------------
+# HSV thresholds for the classic colour-segmentation indices.
+_GREEN_HSV_LOWER = (35, 40, 40)
+_GREEN_HSV_UPPER = (85, 255, 255)
+_ASPHALT_HSV_LOWER = (0, 0, 40)
+_ASPHALT_HSV_UPPER = (180, 40, 200)
+
+# COCO class ids that count as "vehicles" for the parked-car analysis.
+#   2 = car, 3 = motorcycle, 5 = bus, 7 = truck
+_VEHICLE_CLASS_IDS = frozenset({2, 3, 5, 7})
+
+_YOLO_WEIGHTS = "yolov8n.pt"
+
+# Lazy singleton — the YOLO model is heavy, so load it once on first use.
+_yolo_model = None
+
+
+def _get_yolo_model():
+    """Load (and cache) the YOLOv8 detector on first call."""
+    global _yolo_model
+    if _yolo_model is None:
+        from ultralytics import YOLO
+
+        _yolo_model = YOLO(_YOLO_WEIGHTS)
+    return _yolo_model
+
 
 def _normalize(image: Image.Image) -> Image.Image:
     """Convert to RGB and downscale large photos for fast, light processing."""
@@ -180,3 +208,90 @@ def generate_eco_friendly_view(
     )
 
     return generated
+
+
+def run_eco_audit(pil_image: Image.Image) -> dict:
+    """
+    Local Computer Vision eco-audit of a street photo (no external APIs).
+
+    Pipeline:
+        1. PIL -> OpenCV BGR numpy array.
+        2. BGR -> HSV colour space.
+        3. Green View Index   : % of pixels inside the green HSV band.
+        4. Asphalt/Concrete   : % of pixels inside the gray/dark HSV band.
+        5. YOLOv8 (yolov8n.pt): count car / motorcycle / bus / truck detections.
+
+    Returns a dictionary with the keys consumed by the UI:
+        green_view_index, asphalt_coverage, cars_detected,
+        urban_heat_risk, critical_flaws, psychological_impact.
+    """
+    import cv2
+
+    # --- 1) PIL (RGB) -> OpenCV BGR numpy array. ---------------------------
+    rgb_array = np.asarray(pil_image.convert("RGB"))
+    bgr_image = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR)
+
+    # --- 2) Convert to HSV for colour-band segmentation. ------------------
+    hsv_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2HSV)
+    total_pixels = hsv_image.shape[0] * hsv_image.shape[1]
+
+    # --- 3) Green View Index (percentage of green pixels). ----------------
+    green_mask = cv2.inRange(
+        hsv_image, np.array(_GREEN_HSV_LOWER), np.array(_GREEN_HSV_UPPER)
+    )
+    green_view_index = round(
+        float(cv2.countNonZero(green_mask)) / total_pixels * 100.0, 1
+    )
+
+    # --- 4) Asphalt/Concrete Index (percentage of gray/dark pixels). ------
+    asphalt_mask = cv2.inRange(
+        hsv_image, np.array(_ASPHALT_HSV_LOWER), np.array(_ASPHALT_HSV_UPPER)
+    )
+    asphalt_coverage = round(
+        float(cv2.countNonZero(asphalt_mask)) / total_pixels * 100.0, 1
+    )
+
+    # --- 5) YOLOv8 inference -> count vehicles. ---------------------------
+    model = _get_yolo_model()
+    results = model(bgr_image, verbose=False)
+
+    cars_detected = 0
+    for result in results:
+        boxes = getattr(result, "boxes", None)
+        if boxes is None:
+            continue
+        for class_id in boxes.cls.tolist():
+            if int(class_id) in _VEHICLE_CLASS_IDS:
+                cars_detected += 1
+
+    # --- Derived verdicts. ------------------------------------------------
+    urban_heat_risk = "Критический" if asphalt_coverage > 45 else "Низкий"
+
+    critical_flaws: list[str] = []
+    if green_view_index < 10:
+        critical_flaws.append(
+            "Критический недостаток деревьев: полное отсутствие естественной тени."
+        )
+    if asphalt_coverage > 45:
+        critical_flaws.append(
+            "Огромные площади раскаленного бетона и асфальта (эффект теплового острова)."
+        )
+    if cars_detected >= 2:
+        critical_flaws.append(
+            "Пешеходное пространство агрессивно подавлено припаркованными авто."
+        )
+
+    psychological_impact = (
+        "Атмосфера вызывает стресс: серая, агрессивная и неприветливая среда."
+        if len(critical_flaws) >= 2
+        else "Баланс соблюден, но есть потенциал для озеленения."
+    )
+
+    return {
+        "green_view_index": green_view_index,
+        "asphalt_coverage": asphalt_coverage,
+        "cars_detected": cars_detected,
+        "urban_heat_risk": urban_heat_risk,
+        "critical_flaws": critical_flaws,
+        "psychological_impact": psychological_impact,
+    }

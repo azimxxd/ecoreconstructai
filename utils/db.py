@@ -20,7 +20,10 @@ Schema of a single item:
     "timestamp":       str (ISO 8601),
     "ai_problems":         list[str] (Claude eco-audit, may be empty),
     "ai_recommendations":  list[str] (Claude eco-audit, may be empty),
-    "ai_priority":         str ("высокий"/"средний"/"низкий" or "")
+    "ai_priority":         str ("высокий"/"средний"/"низкий" or ""),
+    "ai_summary":          str (one-line AI verdict, may be empty),
+    "author":              str (profile name of the publisher, may be empty),
+    "avatar":              str (emoji avatar of the publisher, may be empty)
 }
 """
 
@@ -106,6 +109,9 @@ def save_item(item: dict[str, Any]) -> dict[str, Any]:
         "ai_problems": list(item.get("ai_problems", [])),
         "ai_recommendations": list(item.get("ai_recommendations", [])),
         "ai_priority": str(item.get("ai_priority", "")),
+        "ai_summary": str(item.get("ai_summary", "")),
+        "author": str(item.get("author", "")),
+        "avatar": str(item.get("avatar", "")),
     }
 
     with _db_lock:

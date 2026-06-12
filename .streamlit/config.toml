@@ -1,11 +1,11 @@
-# EcoReconstruct AI — pinned light "Eco-Tech" theme so the design system
-# stays consistent regardless of the device's dark-mode preference.
+# EcoReconstruct AI — pinned dark "City Scanner" theme (deep forest-black
+# canvas + chlorophyll lime accent) so the design is identical everywhere.
 [theme]
-base = "light"
-primaryColor = "#40916C"
-backgroundColor = "#FBFDFC"
-secondaryBackgroundColor = "#EAF4EE"
-textColor = "#14281F"
+base = "dark"
+primaryColor = "#A8FF60"
+backgroundColor = "#060D09"
+secondaryBackgroundColor = "#0D1A12"
+textColor = "#ECF5EE"
 
 [server]
 headless = true

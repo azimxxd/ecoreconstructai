@@ -29,11 +29,11 @@ def b64(img: Image.Image) -> str:
 
 
 addresses = [
-    ("Алматы, ул. Абая 44", 14),
-    ("Астана, пр. Республики 12", 8),
-    ("Алматы, мкр. Аксай-4", 21),
+    ("Алматы, ул. Абая 44", 14, "aigerim_eco", "🌻"),
+    ("Астана, пр. Республики 12", 8, "daniyar_kz", "🚲"),
+    ("Алматы, мкр. Аксай-4", 21, "green_almaty", "🌳"),
 ]
-for i, (address, likes) in enumerate(addresses):
+for i, (address, likes, author, avatar) in enumerate(addresses):
     photo = fake_street_photo(seed=i)
     masked, gvi = analyze_eco_status(photo)
     concept = generate_eco_friendly_view(photo, gvi)
@@ -43,5 +43,8 @@ for i, (address, likes) in enumerate(addresses):
         "image_original": b64(photo),
         "image_generated": b64(concept),
         "likes": likes,
+        "author": author,
+        "avatar": avatar,
+        "ai_summary": "Серый двор с дефицитом зелени — нужны деревья и тень.",
     })
 print("seeded", len(db.load_db()), "items")
