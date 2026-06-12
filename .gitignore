@@ -1,0 +1,9 @@
+# Secrets — never commit API keys
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+
+# Local database
+projects_db.json
