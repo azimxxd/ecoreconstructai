@@ -181,7 +181,7 @@ def _render_login_screen() -> None:
             align-items: center; justify-content: center;
             text-align: center; padding: 2.4rem 1.5rem 1.2rem;
             gap: .7rem;">
-            <div style="
+            <div class="eco-wordmark" style="
                 font-family: var(--display); font-weight: 900; font-size: 2.2rem;
                 background: var(--grad);
                 -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
@@ -884,6 +884,123 @@ div[data-testid="stForm"]:has(input[placeholder="Добавить коммент
     height: 42px !important;
     border-radius: 12px !important;
     font-size: 0.85rem !important;
+}
+
+/* ======================================================================== */
+/*  LIVELINESS LAYER — ambient motion & micro-interactions                  */
+/*  (purely cosmetic; never changes button targets or layout flow)          */
+/* ======================================================================== */
+
+/* ---- Living aurora: slow-drifting light field behind everything -------- */
+.stApp::after {
+    content: "";
+    position: fixed; inset: -25%;
+    z-index: 0; pointer-events: none;
+    background:
+        radial-gradient(38% 32% at 20% 18%, rgba(61,245,200,.10), transparent 60%),
+        radial-gradient(34% 30% at 82% 30%, rgba(168,255,96,.09), transparent 62%),
+        radial-gradient(40% 34% at 65% 88%, rgba(61,245,200,.06), transparent 60%);
+    filter: blur(8px);
+    animation: aurora-drift 24s ease-in-out infinite alternate;
+}
+@keyframes aurora-drift {
+    0%   { transform: translate3d(-2%, -1%, 0) scale(1);   }
+    50%  { transform: translate3d(3%, 2%, 0)  scale(1.08); }
+    100% { transform: translate3d(-1%, 3%, 0) scale(1.03); }
+}
+
+/* ---- Wordmark: flowing gradient sheen + soft breathing glow ------------- */
+.eco-wordmark, .tk-logo {
+    background-size: 220% 220% !important;
+    animation: sheen-flow 6s ease-in-out infinite;
+    filter: drop-shadow(0 0 14px rgba(61,245,200,.28));
+}
+.eco-wordmark { animation: sheen-flow 6s ease-in-out infinite, brand-glow 3.6s ease-in-out infinite; }
+@keyframes sheen-flow {
+    0%, 100% { background-position: 0% 50%; }
+    50%      { background-position: 100% 50%; }
+}
+@keyframes brand-glow {
+    0%, 100% { filter: drop-shadow(0 0 10px rgba(61,245,200,.20)); }
+    50%      { filter: drop-shadow(0 0 22px rgba(168,255,96,.40)); }
+}
+
+/* ---- Cards rise into place (subtle, fast — re-plays feel responsive) ---- */
+.eco-card, .kpi-card, .scan-card, .inbox-row, .lb-row, .pod-card {
+    animation: rise-in .45s cubic-bezier(.2,.7,.2,1) both;
+}
+.lb-row:nth-child(2)  { animation-delay: .04s; }
+.lb-row:nth-child(3)  { animation-delay: .08s; }
+.lb-row:nth-child(4)  { animation-delay: .12s; }
+.lb-row:nth-child(5)  { animation-delay: .16s; }
+.lb-row:nth-child(n+6){ animation-delay: .20s; }
+@keyframes rise-in {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- Progress / vote bars: flowing light sweep ------------------------- */
+.lb-votebar > span, .scan-bar > span, .tk-meter-bar > span {
+    background-size: 200% 100% !important;
+    animation: bar-flow 2.8s linear infinite;
+}
+@keyframes bar-flow {
+    0%   { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
+}
+
+/* ---- Scan ring: slow rotation + halo pulse ----------------------------- */
+.scan-ring { animation: ring-spin 9s linear infinite; }
+.scan-ringwrap::after {
+    content: ""; position: absolute; inset: -6px;
+    border-radius: 50%; pointer-events: none;
+    box-shadow: 0 0 26px rgba(168,255,96,.22);
+    animation: ring-halo 3s ease-in-out infinite;
+}
+@keyframes ring-spin { to { transform: rotate(360deg); } }
+@keyframes ring-halo { 0%,100% { opacity: .35; } 50% { opacity: .9; } }
+
+/* ---- Podium champion gently floats, with a warm gold halo -------------- */
+.pod-card.pod-1 { animation: rise-in .45s cubic-bezier(.2,.7,.2,1) both, champ-float 4.2s ease-in-out 0.5s infinite; }
+@keyframes champ-float {
+    0%, 100% { transform: translateY(0);    box-shadow: 0 10px 25px rgba(255,215,0,.10); }
+    50%      { transform: translateY(-5px); box-shadow: 0 18px 34px rgba(255,215,0,.20); }
+}
+
+/* ---- Primary actions: quiet breathing glow ----------------------------- */
+.stButton > button[data-testid="stBaseButton-primary"],
+.stFormSubmitButton > button {
+    animation: cta-breathe 3.4s ease-in-out infinite;
+}
+@keyframes cta-breathe {
+    0%, 100% { box-shadow: 0 12px 30px rgba(168,255,96,.18); }
+    50%      { box-shadow: 0 14px 38px rgba(168,255,96,.34); }
+}
+
+/* ---- Active nav item: soft glow pulse so the dock feels alive ---------- */
+.st-key-bottom_nav [class*="st-key-nav_"] button[style] {
+    text-shadow: 0 0 12px rgba(168,255,96,.5);
+}
+
+/* ---- Inputs: focus ring softly pulses ---------------------------------- */
+.stTextInput input:focus, .stTextArea textarea:focus {
+    animation: focus-pulse 2.2s ease-in-out infinite;
+}
+@keyframes focus-pulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(168,255,96,.12); }
+    50%      { box-shadow: 0 0 0 4px rgba(168,255,96,.22); }
+}
+
+/* ---- Respect users who prefer less motion ------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+    .stApp::after, .eco-wordmark, .tk-logo, .eco-card, .kpi-card, .scan-card,
+    .inbox-row, .lb-row, .pod-card, .pod-card.pod-1, .scan-ring,
+    .scan-ringwrap::after, .lb-votebar > span, .scan-bar > span,
+    .tk-meter-bar > span, .kpi-card .kpi-value,
+    .stButton > button[data-testid="stBaseButton-primary"],
+    .stFormSubmitButton > button, .stTextInput input:focus, .stTextArea textarea:focus {
+        animation: none !important;
+    }
 }
 </style>
 """
