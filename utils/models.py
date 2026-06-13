@@ -169,41 +169,52 @@ def build_eco_prompt(audit: dict) -> str:
     green = float(audit.get("green_view_index", 0.0))      # 0–100
     asphalt = float(audit.get("asphalt_coverage", 0.0))    # 0–100
 
-    additions: list[str] = [
-        "plant rows of tall mature trees with full leafy canopies along the "
-        "sidewalks and the verges between the road and the buildings, and add "
-        "grass strips, flower beds, planters and bushes on the pavements"
+    # --- Tidy-up / renovation goals (always), not just greenery. ----------
+    improvements: list[str] = [
+        "straighten and repair any crooked, broken or chipped curbs, kerbstones "
+        "and pavement edges so they are clean, even and well-aligned",
+        "repair and straighten damaged or leaning fences, railings, bollards and "
+        "barriers, and give them a neat freshly-painted finish",
+        "repaint dirty, cracked, stained or peeling building walls and facades in "
+        "clean, tidy, pleasant neutral colours and fix the broken pavement",
     ]
+
+    # --- Greenery goals, scaled to how barren the scene is. ---------------
+    if green < 15:
+        green_goal = (
+            "plant several new mature street trees and add tidy grass strips, "
+            "flower beds and planters on the sidewalks and on the verges between "
+            "the road and the buildings"
+        )
+    else:
+        green_goal = (
+            "add a few extra trees, shrubs and flower planters on the sidewalks "
+            "and verges to complement the existing greenery"
+        )
+    improvements.append(green_goal)
 
     # Lots of bare paving → green the roadsides, NOT the carriageway itself.
     if asphalt > 40:
-        additions.append(
-            "line both sides of the road with dense rows of trees, add a "
-            "narrow planted green median and turn any empty bare ground next "
-            "to the road into a small pocket park"
+        improvements.append(
+            "line the roadsides with trees and turn any empty bare ground next "
+            "to the road into a small tidy pocket park"
         )
 
-    # Little existing greenery → emphasise facade greening and abundance.
-    if green < 15:
-        additions.append(
-            "cover the blank building facades and walls with lush vertical "
-            "gardens and climbing ivy"
-        )
-
-    additions.append(
+    improvements.append(
         "add a few solar panels on the rooftops and clean wooden benches on "
         "the sidewalks"
     )
 
     instruction = (
-        "Add green, eco-friendly landscaping to this SAME street: "
-        + "; ".join(additions) + ". "
-        "VERY IMPORTANT: keep the asphalt road and driving lanes exactly as "
-        "they are — do NOT place trees, grass or anything on the road surface, "
-        "and do not turn the road into a park or alley. Add greenery only on "
-        "the sidewalks, roadside verges, empty ground and building facades. "
-        "Keep the existing buildings, road, cars, camera angle, perspective "
-        "and overall composition unchanged. "
+        "Renovate and beautify this SAME street into a tidy, well-maintained, "
+        "green and eco-friendly version of itself: " + "; ".join(improvements)
+        + ". "
+        "VERY IMPORTANT: keep the asphalt road and driving lanes, the cars and "
+        "the sky exactly as they are — do NOT place trees, grass or anything on "
+        "the road surface or in the sky, and do not turn the road into a park or "
+        "alley. Make changes only on the sidewalks, roadside verges, empty "
+        "ground, fences and building facades. Keep the road layout, camera "
+        "angle, perspective and overall composition unchanged. "
         "Photorealistic, natural soft daylight, realistic proportions, "
         "highly detailed."
     )
@@ -410,12 +421,14 @@ def _try_txt2img_fallback(hf_token: str) -> Image.Image | None:
 _SEG_MODEL = "nvidia/segformer-b0-finetuned-cityscapes-1024-1024"
 _SEG_URL = f"https://router.huggingface.co/hf-inference/models/{_SEG_MODEL}"
 
-# Cityscapes classes whose original pixels must be preserved (restored): the
-# driving surface and the dynamic objects on/next to it. Everything else
-# (sidewalk, vegetation, terrain, building, wall, fence, sky, pole…) keeps the
-# generated greenery.
+# Cityscapes classes whose original pixels must be preserved (restored):
+# things that must NOT be "greened" or repainted — the driving surface, the
+# dynamic objects on/next to it, and the sky (otherwise the model tints the
+# sky green). Everything else (sidewalk, terrain, building, wall, fence,
+# vegetation, pole…) keeps the generated improvements so it can be greened,
+# repainted and tidied up.
 _PROTECT_LABELS = frozenset({
-    "road", "car", "truck", "bus", "motorcycle", "bicycle", "train",
+    "road", "sky", "car", "truck", "bus", "motorcycle", "bicycle", "train",
     "person", "rider",
 })
 
