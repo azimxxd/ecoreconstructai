@@ -4,7 +4,17 @@
 # Python
 __pycache__/
 *.pyc
+*.pyo
+.venv/
+venv/
 
-# Local database & device profile
+# ML model weights (downloaded on first run)
+*.pt
+
+# Legacy local database & device profile
 projects_db.json
 profile.json
+
+# OS
+.DS_Store
+Thumbs.db

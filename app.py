@@ -30,14 +30,28 @@ import plotly.express as px
 import streamlit as st
 from PIL import Image
 
-from utils.claude_ai import (
-    analyze_photo_with_claude,
-    claude_available,
+from utils.free_ai import (
+    free_ai_available,
     generate_appeal_text,
     generate_dashboard_report,
+    generate_findings,
 )
-from utils.db import add_like, load_db, save_item
-from utils.models import analyze_eco_status, generate_eco_friendly_view
+from utils.db import (
+    init_db,
+    load_posts,
+    load_all_posts,
+    save_post,
+    toggle_like,
+    get_user_liked_posts,
+    get_user_posts,
+    upsert_user,
+    update_user_avatar,
+)
+from utils.models import (
+    analyze_eco_status,
+    eco_audit_safe,
+    generate_eco_friendly_view,
+)
 
 # ===========================================================================
 # Page config
@@ -50,28 +64,87 @@ st.set_page_config(
 )
 
 # ===========================================================================
-# Local profile (device-level "account": name + emoji avatar)
+# Avatar options (emoji selection for profile customisation)
 # ===========================================================================
-PROFILE_PATH = Path(__file__).resolve().parent / "profile.json"
-DEFAULT_PROFILE = {"name": "eco_citizen", "avatar": "🌱"}
 AVATARS = ["🌱", "🌳", "🌻", "🦊", "🐝", "🚲", "🏙", "♻️"]
 
 
-def load_profile() -> dict:
-    try:
-        data = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
-        return {
-            "name": str(data.get("name") or DEFAULT_PROFILE["name"]).strip(),
-            "avatar": str(data.get("avatar") or DEFAULT_PROFILE["avatar"]),
-        }
-    except (OSError, json.JSONDecodeError):
-        return dict(DEFAULT_PROFILE)
+# ===========================================================================
+# Auth helpers — Google OIDC via st.login() (Streamlit ≥ 1.42)
+# ===========================================================================
+
+def get_current_user() -> dict:
+    """Return the current user's DB record stored in session_state."""
+    return st.session_state.get("db_user") or {}
 
 
-def save_profile(profile: dict) -> None:
-    PROFILE_PATH.write_text(
-        json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8"
+def get_current_user_id() -> str | None:
+    """Return the current user's DB UUID string, or None."""
+    uid = get_current_user().get("id")
+    return str(uid) if uid else None
+
+
+def _ensure_auth() -> None:
+    """
+    Check that the user is logged in. If not, show the login screen and stop.
+    On first login (or each login) upsert the user into our DB and cache the
+    record in st.session_state so we don't query the DB on every rerun.
+    """
+    if not st.user.is_logged_in:
+        _render_login_screen()
+        st.stop()
+
+    if "db_user" not in st.session_state:
+        db_user = upsert_user(
+            google_sub=st.user.sub,
+            email=getattr(st.user, "email", None),
+            name=getattr(st.user, "name", None),
+        )
+        st.session_state["db_user"] = db_user
+
+
+def _render_login_screen() -> None:
+    st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div style="
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            min-height: 85dvh; text-align: center; padding: 2rem 1.5rem;
+            gap: 1rem;">
+            <div style="
+                font-family: var(--display); font-weight: 900; font-size: 2.2rem;
+                background: var(--grad);
+                -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                ECO//RE
+            </div>
+            <div style="font-family: var(--mono); font-size: .62rem;
+                letter-spacing: .24em; text-transform: uppercase; color: var(--lime);">
+                // сканер городской экологии
+            </div>
+            <p style="color: var(--muted); font-size: .9rem; max-width: 320px;
+                line-height: 1.6; margin-top: .5rem;">
+                Фотографируй серые улицы — ИИ покажет зелёное будущее.<br/>
+                Поддерживай лучшие места города голосами.
+            </p>
+            <div style="
+                background: rgba(255,255,255,.04);
+                border: 1px solid var(--line-soft);
+                border-radius: 18px;
+                padding: 1rem 1.2rem;
+                font-size: .8rem; color: var(--muted);
+                max-width: 320px; line-height: 1.55; margin-top: .3rem;">
+                🔒 Аккаунт нужен, чтобы отслеживать твои публикации и голоса.
+                Данные профиля не передаются третьим лицам.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
+    col_l, col_c, col_r = st.columns([1, 2, 1])
+    with col_c:
+        if st.button("🔑 Войти через Google", type="primary", use_container_width=True):
+            st.login("google")
 
 
 # ===========================================================================
@@ -905,7 +978,9 @@ def render_feed() -> None:
         unsafe_allow_html=True,
     )
 
-    feed_items = load_db()[:20]
+    user_id = get_current_user_id()
+    feed_items = load_posts(limit=20)
+
     if not feed_items:
         st.markdown(
             """
@@ -922,15 +997,26 @@ def render_feed() -> None:
         )
         return
 
+    liked_post_ids: set[str] = (
+        get_user_liked_posts(user_id) if user_id else set()
+    )
+
     with st.container(key="feedwrap"):
         for item in feed_items:
             item_id = item["id"]
             with st.container(key=f"card_{item_id}"):
                 st.markdown(feed_card_html(item), unsafe_allow_html=True)
                 like_count = int(item.get("likes", 0))
-                if st.button(f"🔥 {like_count}", key=f"like_{item_id}"):
-                    add_like(item_id)
-                    st.rerun()
+                is_liked = item_id in liked_post_ids
+                btn_label = f"💚 {like_count}" if is_liked else f"🔥 {like_count}"
+                if st.button(btn_label, key=f"like_{item_id}"):
+                    if user_id:
+                        now_liked, new_count = toggle_like(user_id, item_id)
+                        if now_liked:
+                            liked_post_ids.add(item_id)
+                        else:
+                            liked_post_ids.discard(item_id)
+                        st.rerun()
 
 
 # ===========================================================================
@@ -946,7 +1032,7 @@ def render_steps(active: int) -> None:
 
 
 def render_camera() -> None:
-    profile = load_profile()
+    db_user = get_current_user()
     st.markdown(
         """
         <div class="page-head">
@@ -964,6 +1050,23 @@ def render_camera() -> None:
         default="📷 Камера",
         key="source_mode",
         label_visibility="collapsed",
+    )
+
+    # --- Подсказка по качеству фото ----------------------------------------
+    st.markdown(
+        """
+        <div class="eco-card" style="
+            border-color: rgba(61,245,200,.3);
+            background: rgba(61,245,200,.05);
+            padding: .75rem 1rem; margin-bottom: .6rem;">
+            📸 <strong>Советы по фото:</strong> снимайте
+            <strong>улицы, дороги, парки и дворы — без людей</strong>
+            и лишних объектов в кадре.
+            Меньше людей и машин → точнее анализ ИИ и реалистичнее
+            зелёный концепт.
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     widget_generation = st.session_state.get("uploader_key", 0)
@@ -1005,18 +1108,24 @@ def render_camera() -> None:
     # Run the pipelines once per photo, cache in session.
     file_signature = f"{getattr(photo_file, 'name', 'camera')}_{photo_file.size}"
     if st.session_state.get("analyzed_signature") != file_signature:
-        with st.spinner("🛰 SegFormer анализирует озеленение..."):
-            masked_image, green_index = analyze_eco_status(original_image)
-        with st.spinner("🎨 Stable Diffusion рисует зелёное будущее..."):
-            generated_image = generate_eco_friendly_view(original_image, green_index)
+        # 1) Real image analysis first: YOLOv8 + OpenCV eco-audit.
+        with st.spinner("🛰 YOLOv8 анализирует улицу..."):
+            eco_audit = eco_audit_safe(original_image)
+            green_index = eco_audit["green_view_index"] / 100.0
+            masked_image, _ = analyze_eco_status(original_image)
+        # 2) Image-to-image, with a prompt built from the YOLO audit.
+        with st.spinner("🎨 ИИ рисует зелёное будущее по результатам анализа..."):
+            generated_image = generate_eco_friendly_view(original_image, eco_audit)
         st.session_state["analyzed_signature"] = file_signature
         st.session_state["original_image"] = original_image
+        st.session_state["eco_audit"] = eco_audit
         st.session_state["analysis_result"] = (masked_image, green_index)
         st.session_state["generated_image"] = generated_image
 
     masked_image, green_index = st.session_state["analysis_result"]
     generated_image = st.session_state["generated_image"]
     original_image = st.session_state["original_image"]
+    eco_audit = st.session_state["eco_audit"]
 
     # --- Scan result: GVI ring gauge -------------------------------------
     verdict = (
@@ -1056,6 +1165,22 @@ def render_camera() -> None:
     )
     st.image(generated_image, caption="🎨 Future Green Concept (GenAI)", width="stretch")
 
+    # --- Дисклеймер точности ИИ -------------------------------------------
+    st.markdown(
+        """
+        <div class="eco-card" style="
+            border-color: rgba(255,194,75,.35);
+            background: rgba(255,194,75,.06);
+            padding: .75rem 1rem; font-size: .82rem; color: var(--muted);">
+            ⚠️ <strong style="color:var(--amber);">Важно:</strong>
+            результаты анализа и изображения сгенерированы ИИ и могут быть
+            неточными. Воспринимайте их как отправную точку — всегда
+            проверяйте данные перед использованием в официальных обращениях.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # --- Location input ----------------------------------------------------
     location_address = st.text_input(
         "📍 Адрес / Локация",
@@ -1069,17 +1194,16 @@ def render_camera() -> None:
         unsafe_allow_html=True,
     )
 
-    if not claude_available():
-        st.info("Добавьте GOOGLE_API_KEY в secrets.toml для ИИ-анализа")
+    if not free_ai_available():
+        st.info("Добавьте HF_API_TOKEN в secrets.toml для ИИ-анализа")
     else:
-        with st.spinner("🤖 ИИ изучает фотографию..."):
-            ai_analysis = analyze_photo_with_claude(
-                original_image,
-                green_index,
+        with st.spinner("🤖 ИИ формулирует выводы по данным анализа..."):
+            ai_analysis = generate_findings(
+                eco_audit,
                 location_address.strip() or "адрес не указан",
             )
         if ai_analysis is None:
-            st.info("Добавьте GOOGLE_API_KEY в secrets.toml для ИИ-анализа")
+            st.info("Добавьте HF_API_TOKEN в secrets.toml для ИИ-анализа")
         else:
             st.session_state["ai_analysis"] = ai_analysis
             priority = ai_analysis.get("priority", "средний").lower()
@@ -1120,7 +1244,7 @@ def render_camera() -> None:
                 if appeal_text:
                     st.session_state["appeal_text"] = appeal_text
                 else:
-                    st.info("Добавьте GOOGLE_API_KEY в secrets.toml для ИИ-анализа")
+                    st.info("Добавьте HF_API_TOKEN в secrets.toml для ИИ-анализа")
 
             if st.session_state.get("appeal_text"):
                 st.text_area(
@@ -1138,8 +1262,10 @@ def render_camera() -> None:
         if not location_address.strip():
             st.warning("Пожалуйста, укажите адрес или название локации 📍")
         else:
+            user_id = get_current_user_id()
             saved_analysis = st.session_state.get("ai_analysis") or {}
-            save_item(
+            save_post(
+                user_id,
                 {
                     "address": location_address.strip(),
                     "green_index": round(green_index, 3),
@@ -1149,9 +1275,7 @@ def render_camera() -> None:
                     "ai_recommendations": saved_analysis.get("recommendations", []),
                     "ai_priority": saved_analysis.get("priority", ""),
                     "ai_summary": saved_analysis.get("summary", ""),
-                    "author": profile["name"],
-                    "avatar": profile["avatar"],
-                }
+                },
             )
             reset_idea_form()
             st.session_state["flash"] = "Решение опубликовано в ленту! 🎉"
@@ -1180,7 +1304,7 @@ def render_top() -> None:
         unsafe_allow_html=True,
     )
 
-    all_items = load_db()
+    all_items = load_all_posts()
     monthly_items = [i for i in all_items if is_current_month(i.get("timestamp", ""))]
     pool = monthly_items
     if not pool and all_items:
@@ -1328,8 +1452,8 @@ def render_top() -> None:
         )
 
         if st.button("🤖 Сгенерировать отчёт для акимата"):
-            if not claude_available():
-                st.info("Добавьте GOOGLE_API_KEY в secrets.toml для ИИ-анализа")
+            if not free_ai_available():
+                st.info("Добавьте HF_API_TOKEN в secrets.toml для ИИ-анализа")
             else:
                 top_zones_list = top_critical[
                     ["Локация", "Green Index", "Голоса", "Приоритет"]
@@ -1339,7 +1463,7 @@ def render_top() -> None:
                 if dashboard_report:
                     st.session_state["dashboard_report"] = dashboard_report
                 else:
-                    st.info("Добавьте GOOGLE_API_KEY в secrets.toml для ИИ-анализа")
+                    st.info("Добавьте HF_API_TOKEN в secrets.toml для ИИ-анализа")
 
         if st.session_state.get("dashboard_report"):
             with st.expander("📋 Аналитический отчёт", expanded=True):
@@ -1350,9 +1474,14 @@ def render_top() -> None:
 # Profile page — aurora banner, gradient-ring avatar, solutions grid
 # ===========================================================================
 def render_profile() -> None:
-    profile = load_profile()
-    all_items = load_db()
-    my_items = [i for i in all_items if (i.get("author") or "") == profile["name"]]
+    db_user = get_current_user()
+    user_id = get_current_user_id()
+
+    profile_name = db_user.get("name") or "eco_citizen"
+    profile_avatar = db_user.get("avatar") or "🌱"
+    profile_email = db_user.get("email") or ""
+
+    my_items = get_user_posts(user_id) if user_id else []
 
     total_fires = sum(int(i.get("likes", 0)) for i in my_items)
     average_gvi = (
@@ -1364,9 +1493,9 @@ def render_profile() -> None:
     st.markdown(
         f"""
         <div class="pf-banner">
-            <div class="pf-ava">{html.escape(profile["avatar"])}</div>
+            <div class="pf-ava">{html.escape(profile_avatar)}</div>
         </div>
-        <div class="pf-name">@{html.escape(profile["name"])}</div>
+        <div class="pf-name">@{html.escape(profile_name)}</div>
         <div class="pf-sub">эко-активист // город-сканер</div>
         """,
         unsafe_allow_html=True,
@@ -1392,21 +1521,19 @@ def render_profile() -> None:
 
     with st.expander("⚙️ Настройки профиля"):
         with st.form("profile_form", border=False):
-            new_name = st.text_input(
-                "Имя пользователя", value=profile["name"], max_chars=24
-            )
-            new_avatar = st.selectbox(
-                "Аватар",
-                AVATARS,
-                index=AVATARS.index(profile["avatar"])
-                if profile["avatar"] in AVATARS
-                else 0,
-            )
-            if st.form_submit_button("💾 Сохранить"):
-                cleaned = new_name.strip().replace(" ", "_") or DEFAULT_PROFILE["name"]
-                save_profile({"name": cleaned, "avatar": new_avatar})
-                st.session_state["flash"] = "Профиль обновлён ✅"
-                st.rerun()
+            current_idx = AVATARS.index(profile_avatar) if profile_avatar in AVATARS else 0
+            new_avatar = st.selectbox("Аватар", AVATARS, index=current_idx)
+            if profile_email:
+                st.caption(f"📧 {profile_email}")
+            if st.form_submit_button("💾 Сохранить аватар"):
+                if user_id:
+                    update_user_avatar(user_id, new_avatar)
+                    st.session_state["db_user"]["avatar"] = new_avatar
+                    st.session_state["flash"] = "Аватар обновлён ✅"
+                    st.rerun()
+
+    if st.button("🚪 Выйти из аккаунта", use_container_width=True):
+        st.logout()
 
     st.markdown(
         '<div class="section-title">✦ Мои решения</div>', unsafe_allow_html=True
@@ -1466,8 +1593,11 @@ def render_nav(active_page: str) -> None:
 
 
 # ===========================================================================
-# App entry — page router
+# App entry — auth check → page router
 # ===========================================================================
+init_db()          # one-shot pool creation + schema migration
+_ensure_auth()     # redirect to login screen if not authenticated
+
 st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 
 if "page" not in st.session_state:
