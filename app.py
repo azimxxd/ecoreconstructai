@@ -1002,6 +1002,137 @@ div[data-testid="stForm"]:has(input[placeholder="Добавить коммент
         animation: none !important;
     }
 }
+
+/* ════════════════════════════════════════════════════════════════════════ */
+/*  ✦ ULTRA-POLISH LAYER — premium depth, glass & light.                     */
+/*  STRICTLY visual: only color / border / shadow / blur / gradient props.   */
+/*  Never touches position · size · layout of any control or button.         */
+/* ════════════════════════════════════════════════════════════════════════ */
+
+:root {
+    --ease-glide: cubic-bezier(0.16, 1, 0.3, 1);
+    --glass-sheen: linear-gradient(157deg, rgba(255,255,255,.06), rgba(255,255,255,.012) 44%, transparent 78%);
+}
+
+/* ---- Crisp, optically-tuned type rendering everywhere ------------------ */
+html, body, .stApp, [class*="css"] {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+.eco-wordmark, .tk-logo, .page-head h1, .pf-name, .tk-addr {
+    letter-spacing: -0.012em;
+}
+
+/* ---- Tinted text selection + themed scrollbars ------------------------- */
+::selection { background: rgba(168,255,96,.30); color: #06130C; }
+* { scrollbar-width: thin; scrollbar-color: rgba(120,235,170,.30) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, var(--teal), var(--lime));
+    border-radius: 99px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+
+/* ---- Glass surfaces: gradient sheen + inner light + floating shadow ---- */
+.eco-card, .kpi-card, .inbox-row, .lb-row {
+    background-image: var(--glass-sheen);
+}
+.eco-card, .kpi-card, .inbox-row, .lb-row, .pod-card {
+    backdrop-filter: blur(18px) saturate(135%);
+    -webkit-backdrop-filter: blur(18px) saturate(135%);
+    box-shadow:
+        0 1px 0 rgba(255,255,255,.055) inset,
+        0 22px 48px -26px rgba(0,0,0,.78),
+        0 6px 16px -10px rgba(0,0,0,.55);
+    transition-timing-function: var(--ease-glide);
+}
+
+/* ---- KPI numbers: liquid chlorophyll gradient fill --------------------- */
+.kpi-card .kpi-value {
+    background: var(--grad);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 0 11px rgba(168,255,96,.28));
+}
+
+/* ---- Leaderboard rows: living gradient edge ---------------------------- */
+.lb-row { position: relative; overflow: hidden; }
+.lb-row::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+    width: 3px; border-radius: 3px;
+    background: var(--grad);
+    opacity: .55;
+    box-shadow: 0 0 12px rgba(168,255,96,.35);
+    pointer-events: none;
+}
+
+/* ---- Secondary buttons: hairline highlight + glide ease ---------------- */
+.stButton > button, .stFormSubmitButton > button {
+    transition-timing-function: var(--ease-glide);
+    box-shadow: 0 1px 0 rgba(255,255,255,.05) inset;
+}
+.stButton > button:hover {
+    box-shadow: 0 1px 0 rgba(255,255,255,.08) inset, 0 10px 26px -14px rgba(168,255,96,.35);
+}
+
+/* ---- Primary CTA: flowing aurora gradient + amplified halo ------------- */
+.stButton > button[data-testid="stBaseButton-primary"],
+.stFormSubmitButton > button {
+    background-size: 185% 185% !important;
+    animation: cta-breathe 3.4s ease-in-out infinite, sheen-flow 5.2s ease-in-out infinite !important;
+}
+
+/* ---- Feed glass info panel + action rail: deeper frosted glass --------- */
+.tk-info {
+    backdrop-filter: blur(20px) saturate(145%);
+    -webkit-backdrop-filter: blur(20px) saturate(145%);
+    box-shadow: 0 1px 0 rgba(255,255,255,.07) inset, 0 26px 54px -20px rgba(0,0,0,.82);
+}
+.scan-card {
+    backdrop-filter: blur(14px) saturate(135%);
+    -webkit-backdrop-filter: blur(14px) saturate(135%);
+    box-shadow: 0 1px 0 rgba(255,255,255,.05) inset, 0 24px 50px -26px rgba(0,0,0,.78);
+}
+div[class*="st-key-like_"] .stButton > button,
+div[class*="st-key-comment_"] .stButton > button,
+div[class*="st-key-share_"] .stButton > button {
+    backdrop-filter: blur(16px) saturate(145%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(145%) !important;
+    box-shadow: 0 1px 0 rgba(255,255,255,.09) inset, 0 12px 30px rgba(0,0,0,.52) !important;
+    transition-timing-function: var(--ease-glide) !important;
+}
+
+/* ---- Floating dock: richer glass + chlorophyll rim glow ---------------- */
+.st-key-bottom_nav {
+    background: rgba(9,18,13,.76) !important;
+    backdrop-filter: blur(26px) saturate(150%) !important;
+    -webkit-backdrop-filter: blur(26px) saturate(150%) !important;
+    border: 1px solid rgba(168,255,96,.20) !important;
+    box-shadow:
+        0 1px 0 rgba(255,255,255,.07) inset,
+        0 22px 60px rgba(0,0,0,.62),
+        0 0 44px -14px rgba(61,245,200,.22) !important;
+}
+
+/* ---- Avatar ring + profile gradient ring: subtle outer glow ------------ */
+.pf-ava-standalone { box-shadow: 0 10px 30px rgba(0,0,0,.5), 0 0 28px -8px rgba(168,255,96,.30); }
+
+/* ---- Inputs: frosted glass surface ------------------------------------- */
+.stTextInput input, .stTextArea textarea {
+    backdrop-filter: blur(8px) saturate(120%);
+    -webkit-backdrop-filter: blur(8px) saturate(120%);
+    transition-timing-function: var(--ease-glide) !important;
+}
+
+/* ---- Re-honour reduced-motion for the polish animations ---------------- */
+@media (prefers-reduced-motion: reduce) {
+    .stButton > button[data-testid="stBaseButton-primary"],
+    .stFormSubmitButton > button { animation: none !important; }
+}
 </style>
 """
 
@@ -1421,6 +1552,57 @@ div[class*="st-key-share_"] .stButton > button:hover {
 .tk-empty .mono {
     font-family: var(--mono); font-size: .62rem;
     letter-spacing: .2em; text-transform: uppercase; color: var(--lime);
+}
+
+/* ════════════════════════════════════════════════════════════════════════ */
+/*  ✦ FEED ULTRA-POLISH — cinematic depth for the full-screen scanner.       */
+/*  Visual only: never alters slide / button / rail geometry.                */
+/* ════════════════════════════════════════════════════════════════════════ */
+
+/* Subtle scanner sweep line gliding down the active card (signature motion) */
+.tk-card::after {
+    content: ""; position: absolute; left: 0; right: 0; top: 0; height: 130px;
+    z-index: 3; pointer-events: none; opacity: .5;
+    background: linear-gradient(180deg, rgba(168,255,96,.16), transparent 85%);
+    mix-blend-mode: screen;
+    animation: tk-scan 6.5s cubic-bezier(0.55,0,0.45,1) infinite;
+}
+@keyframes tk-scan {
+    0%   { transform: translateY(-130px); opacity: 0; }
+    12%  { opacity: .55; }
+    50%  { transform: translateY(70vh);  opacity: .12; }
+    60%, 100% { transform: translateY(100vh); opacity: 0; }
+}
+
+/* Viewfinder brackets: brighter, faint neon glow — feels like live optics */
+.tk-frame {
+    opacity: .55;
+    filter: drop-shadow(0 0 6px rgba(168,255,96,.45));
+}
+
+/* Slide tags + counter: deeper frosted glass */
+.tk-tag, .tk-num {
+    backdrop-filter: blur(14px) saturate(150%) !important;
+    -webkit-backdrop-filter: blur(14px) saturate(150%) !important;
+    box-shadow: 0 1px 0 rgba(255,255,255,.08) inset, 0 8px 22px rgba(0,0,0,.4);
+}
+
+/* Top bar live chip — refined */
+.tk-live { text-shadow: 0 0 14px rgba(168,255,96,.35); }
+.tk-logo { filter: drop-shadow(0 0 16px rgba(61,245,200,.30)); }
+
+/* Bottom info readout: liquid gradient address + crisper meter */
+.tk-meter-bar { box-shadow: 0 1px 0 rgba(255,255,255,.06) inset; }
+
+/* Action rail circles: gentle continuous breathing rim on the card */
+div[class*="st-key-like_"] .stButton > button:hover,
+div[class*="st-key-comment_"] .stButton > button:hover,
+div[class*="st-key-share_"] .stButton > button:hover {
+    box-shadow: 0 0 0 1px rgba(168,255,96,.6), 0 12px 32px rgba(0,0,0,.55) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tk-card::after { animation: none !important; opacity: 0 !important; }
 }
 </style>
 """
