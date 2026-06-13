@@ -52,6 +52,14 @@ from utils.db import (
     update_user_avatar,
     make_auth_token,
     verify_auth_token,
+    load_comments,
+    save_comment,
+    count_comments,
+    get_user_by_id,
+    toggle_follow,
+    is_following,
+    get_followers_count,
+    get_following_count,
 )
 from utils.models import (
     analyze_eco_status,
@@ -538,87 +546,120 @@ hr { border-color: var(--line-soft); }
 .scan-bar > span { display: block; height: 100%; border-radius: 4px; background: var(--grad); }
 
 /* ---- Leaderboard -------------------------------------------------------- */
-.pod-card { text-align: center; }
-.pod-card.pod-2 { padding-top: 20px; }
-.pod-card.pod-3 { padding-top: 30px; }
-.pod-imgwrap {
-    position: relative; border-radius: 20px; overflow: hidden;
-    border: 1px solid var(--line-soft);
+.pod-card {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 20px;
+    padding: 10px;
+    text-align: center;
+    transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
 }
-.pod-1 .pod-imgwrap {
-    border-color: rgba(168,255,96,.55);
-    box-shadow: 0 0 28px rgba(168,255,96,.20);
+.pod-card:hover {
+    transform: translateY(-4px);
+    border-color: rgba(168, 255, 96, 0.2);
+}
+.pod-card.pod-1 {
+    border-color: rgba(255, 215, 0, 0.3);
+    box-shadow: 0 10px 25px rgba(255, 215, 0, 0.1);
+    background: linear-gradient(180deg, rgba(255, 215, 0, 0.03), rgba(255, 255, 255, 0.01));
+}
+.pod-card.pod-2 {
+    border-color: rgba(192, 192, 192, 0.2);
+    box-shadow: 0 8px 20px rgba(192, 192, 192, 0.06);
+    background: linear-gradient(180deg, rgba(192, 192, 192, 0.02), rgba(255, 255, 255, 0.01));
+    margin-top: 15px;
+}
+.pod-card.pod-3 {
+    border-color: rgba(205, 127, 50, 0.15);
+    box-shadow: 0 6px 15px rgba(205, 127, 50, 0.05);
+    background: linear-gradient(180deg, rgba(205, 127, 50, 0.015), rgba(255, 255, 255, 0.01));
+    margin-top: 25px;
+}
+.pod-imgwrap {
+    position: relative; border-radius: 14px; overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.06);
 }
 .pod-imgwrap img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
 .pod-rank {
-    position: absolute; top: 7px; left: 7px;
-    width: 26px; height: 26px; border-radius: 50%;
+    position: absolute; top: 6px; left: 6px;
+    width: 22px; height: 22px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
-    font-family: var(--mono); font-weight: 700; font-size: .76rem;
-    background: rgba(8,16,11,.72); backdrop-filter: blur(6px);
-    border: 1px solid var(--line); color: var(--lime);
+    font-family: var(--mono); font-weight: 700; font-size: 0.68rem;
 }
-.pod-1 .pod-rank { background: var(--grad); color: var(--ink); border: none; }
-.pod-addr { font-weight: 800; font-size: .7rem; margin-top: .5rem; line-height: 1.3; }
-.pod-fire { font-family: var(--mono); color: var(--lime); font-size: .76rem; margin-top: .25rem; }
-.pod-base {
-    height: var(--h, 16px); margin-top: .55rem;
-    border-radius: 10px 10px 4px 4px;
-    background: linear-gradient(180deg, rgba(168,255,96,.22), rgba(168,255,96,.02));
-    border: 1px solid var(--line);
+.pod-1 .pod-rank { background: linear-gradient(135deg, #FFD700, #FFA500); color: #000; }
+.pod-2 .pod-rank { background: linear-gradient(135deg, #E0E0E0, #9E9E9E); color: #000; }
+.pod-3 .pod-rank { background: linear-gradient(135deg, #CD7F32, #8B5A2B); color: #FFF; }
+
+.pod-addr {
+    font-weight: 700; font-size: 0.68rem; margin-top: 0.5rem;
+    line-height: 1.25; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    height: 1.7rem;
+}
+.pod-stats {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 0.45rem; font-family: var(--mono); font-size: 0.68rem;
+}
+.pod-fire { color: var(--lime); font-weight: 700; }
+.pod-gvi-badge {
+    padding: 1px 5px; border-radius: 5px; font-weight: 700; font-size: 0.58rem;
+}
+.pod-author {
+    display: flex; align-items: center; justify-content: center; gap: 4px;
+    margin-top: 0.45rem; border-top: 1px solid rgba(255,255,255,0.05);
+    padding-top: 0.4rem; font-size: 0.62rem; color: var(--muted);
+}
+.pod-avatar { font-size: 0.7rem; }
+.pod-username {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 65px;
 }
 
 .lb-row {
     display: flex; align-items: center; gap: 12px;
-    background: var(--glass);
-    backdrop-filter: blur(14px);
-    border: 1px solid var(--line-soft);
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 18px;
-    padding: .6rem .75rem;
-    margin-bottom: .5rem;
+    padding: .65rem .85rem;
+    margin-bottom: .6rem;
+    transition: transform 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+}
+.lb-row:hover {
+    transform: translateX(3px);
+    border-color: rgba(168, 255, 96, 0.2);
+    background: rgba(168, 255, 96, 0.015);
 }
 .lb-rank {
-    font-family: var(--mono); font-weight: 700; font-size: .8rem;
-    width: 22px; text-align: center; color: var(--lime); flex: none;
+    font-family: var(--mono); font-weight: 700; font-size: 0.85rem;
+    width: 24px; text-align: center; color: var(--muted); flex: none;
 }
-.lb-thumb { width: 52px; height: 52px; border-radius: 14px; object-fit: cover; flex: none; }
+.lb-thumb { width: 48px; height: 48px; border-radius: 12px; object-fit: cover; flex: none; border: 1px solid rgba(255,255,255,0.06); }
 .lb-main { flex: 1; min-width: 0; }
-.lb-addr { font-weight: 800; font-size: .84rem; line-height: 1.25; }
+.lb-addr { font-weight: 800; font-size: 0.8rem; line-height: 1.25; color: var(--text); }
 .lb-votebar {
     height: 4px; border-radius: 3px;
-    background: rgba(255,255,255,.08);
-    margin-top: .4rem; overflow: hidden;
+    background: rgba(255,255,255,.05);
+    margin-top: 0.35rem; overflow: hidden;
 }
 .lb-votebar > span { display: block; height: 100%; border-radius: 3px; background: var(--grad); }
 .lb-sub {
     font-family: var(--mono); color: var(--muted);
-    font-size: .6rem; letter-spacing: .06em; margin-top: .3rem;
+    font-size: 0.6rem; letter-spacing: 0.04em; margin-top: 0.25rem;
 }
 .lb-fire {
     margin-left: auto; font-family: var(--mono); font-weight: 700;
-    color: var(--lime); white-space: nowrap; flex: none; font-size: .8rem;
+    color: var(--lime); white-space: nowrap; flex: none; font-size: 0.8rem;
 }
 
 /* ---- Profile -------------------------------------------------------------- */
-.pf-banner {
+.pf-ava-container {
+    display: flex;
+    justify-content: center;
+    margin-top: 1rem;
+    margin-bottom: 0.8rem;
     position: relative;
-    height: 112px;
-    border-radius: 24px;
-    border: 1px solid var(--line);
-    background:
-        radial-gradient(180px 100px at 82% 0%, rgba(61,245,200,.30), transparent 70%),
-        radial-gradient(240px 130px at 12% 100%, rgba(168,255,96,.24), transparent 70%),
-        #0D1A12;
-    margin-bottom: 52px;
 }
-.pf-banner::after {
-    content: "ECO//RE";
-    position: absolute; right: 16px; top: 14px;
-    font-family: var(--display); font-weight: 900; font-size: 1.4rem;
-    color: rgba(236,245,238,.07); letter-spacing: .02em;
-}
-.pf-ava {
-    position: absolute; left: 50%; bottom: -38px; transform: translateX(-50%);
+.pf-ava-standalone {
     width: 84px; height: 84px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
     font-size: 2.2rem;
@@ -675,13 +716,14 @@ hr { border-color: var(--line-soft); }
     box-shadow: none;
     color: var(--muted);
     font-family: var(--mono);
-    font-size: .62rem;
+    font-size: .56rem;
     font-weight: 700;
-    letter-spacing: .06em;
+    letter-spacing: .02em;
     text-transform: uppercase;
-    padding: .55rem 0;
-    border-radius: 14px;
-    white-space: nowrap;
+    padding: .4rem 0;
+    border-radius: 12px;
+    white-space: pre-line !important;
+    line-height: 1.35 !important;
     overflow: hidden;
 }
 .st-key-bottom_nav .stButton > button:hover {
@@ -690,22 +732,158 @@ hr { border-color: var(--line-soft); }
     background: rgba(255,255,255,.05);
     border: none;
 }
-/* Raised gradient scan button */
+/* Solarpunk Viewfinder Scan Button */
 .st-key-bottom_nav .st-key-nav_camera button {
-    background: var(--grad) !important;
-    color: var(--ink) !important;
-    font-size: 1.35rem !important;
-    width: 54px !important; height: 54px;
-    margin: -24px auto 0;
-    display: block;
-    border-radius: 50% !important;
-    padding: 0 !important;
+    background: transparent !important;
     border: none !important;
-    box-shadow: 0 10px 30px rgba(168,255,96,.35), 0 0 0 6px rgba(9,18,13,.9) !important;
+    box-shadow: none !important;
+    color: var(--muted) !important;
+    border-radius: 12px !important;
+    padding: .4rem 0 !important;
+    transition: all 0.2s ease !important;
 }
 .st-key-bottom_nav .st-key-nav_camera button:hover {
-    transform: scale(1.06) !important;
-    filter: brightness(1.06) !important;
+    color: var(--text) !important;
+    background: rgba(255,255,255,.05) !important;
+}
+
+/* ---- Inbox Screen Styles ---------------------------------------------- */
+.inbox-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    background: var(--glass);
+    backdrop-filter: blur(14px);
+    border: 1px solid var(--line-soft);
+    border-radius: 18px;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+    transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.inbox-row:hover {
+    transform: translateY(-2px);
+    border-color: rgba(168, 255, 96, 0.35);
+    box-shadow: 0 8px 24px rgba(168, 255, 96, 0.08);
+}
+.inbox-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.04);
+    font-size: 1.25rem;
+    border: 1px solid var(--line-soft);
+    flex-shrink: 0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.inbox-content {
+    flex: 1;
+    min-width: 0;
+}
+.inbox-title-wrap {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 0.25rem;
+}
+.inbox-title {
+    font-weight: 700;
+    font-size: 0.88rem;
+    color: var(--text);
+}
+.inbox-time {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    color: var(--muted);
+    white-space: nowrap;
+}
+.inbox-text {
+    font-size: 0.82rem;
+    color: var(--muted);
+    line-height: 1.45;
+}
+.inbox-badge {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.58rem;
+    font-weight: 700;
+    padding: 0.15rem 0.5rem;
+    border-radius: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-top: 0.45rem;
+    border: 1px solid currentColor;
+}
+
+/* ---- Comments dialog styling (normal centered) ---- */
+.comments-scroll-area {
+    max-height: 300px;
+    overflow-y: auto !important;
+    padding-right: 4px;
+    margin-bottom: 1rem;
+}
+
+.comments-scroll-area::-webkit-scrollbar {
+    width: 4px;
+}
+.comments-scroll-area::-webkit-scrollbar-track {
+    background: transparent;
+}
+.comments-scroll-area::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px;
+}
+
+.comment-item {
+    display: flex; gap: 10px; margin-bottom: 1rem; align-items: flex-start;
+}
+.comment-avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: rgba(255,255,255,0.04);
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid rgba(255,255,255,0.08);
+    font-size: 1.1rem; flex-shrink: 0;
+}
+.comment-content { min-width: 0; flex-grow: 1; }
+.comment-header { display: flex; justify-content: space-between; align-items: baseline; }
+.comment-author { font-weight: 700; font-size: 0.82rem; color: var(--text); }
+.comment-time { font-size: 0.65rem; color: var(--muted); font-family: var(--mono); }
+.comment-text { margin: 2px 0 0 0; font-size: 0.8rem; color: #D1E2D7; line-height: 1.4; word-wrap: break-word; }
+
+/* style the form container inside the comments dialog */
+div[data-testid="stForm"]:has(input[placeholder="Добавить комментарий..."]) {
+    width: 100% !important;
+    background: var(--panel) !important;
+    padding: 12px 0 0 0 !important;
+    border-top: 1px solid rgba(255,255,255,0.06) !important;
+}
+
+.st-key-new_comment_form button,
+div[data-testid="stForm"]:has(input[placeholder="Добавить комментарий..."]) button {
+    height: 42px !important;
+    width: 42px !important;
+    min-width: 42px !important;
+    padding: 0 !important;
+    font-size: 1.1rem !important;
+    border-radius: 50% !important;
+    margin-top: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: var(--grad) !important;
+    color: var(--ink) !important;
+    box-shadow: 0 4px 15px rgba(168,255,96,.20) !important;
+    border: none !important;
+}
+
+.st-key-new_comment_form input,
+div[data-testid="stForm"]:has(input[placeholder="Добавить комментарий..."]) input {
+    height: 42px !important;
+    border-radius: 12px !important;
+    font-size: 0.85rem !important;
 }
 </style>
 """
@@ -730,7 +908,7 @@ div[class*="st-key-card_"] { position: relative; }
     background: #000;
     overflow: hidden;
 }
-/* Horizontal swipe: slide 1 = today, slide 2 = AI green future */
+/* Horizontal swipe: slide 1 = AI green future, slide 2 = today */
 .tk-swipe {
     display: flex;
     height: 100%;
@@ -813,18 +991,7 @@ div[class*="st-key-card_"] { position: relative; }
     border: 1px solid rgba(255,255,255,.10);
     backdrop-filter: blur(16px);
 }
-.tk-author { display: flex; align-items: center; gap: 9px; }
-.tk-ava {
-    width: 30px; height: 30px; border-radius: 50%; flex: none;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: .9rem;
-    background: linear-gradient(#0D1A12, #0D1A12) padding-box, var(--grad) border-box;
-    border: 1.5px solid transparent;
-}
-.tk-name { font-weight: 800; font-size: .88rem; }
-.tk-time { font-family: var(--mono); color: rgba(236,245,238,.55); font-size: .62rem; letter-spacing: .06em; }
 .tk-addr {
-    margin-top: .55rem;
     font-family: var(--display);
     font-weight: 700; font-size: .84rem; line-height: 1.35;
 }
@@ -895,9 +1062,167 @@ div[class*="st-key-card_"] { position: relative; }
     animation: tk-blink 1.6s ease-in-out infinite;
 }
 
-/* Right action rail: glass vote button */
+/* TikTok-style profile avatar overlay */
+.tk-profile-ava {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1.5px solid #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.35rem;
+    background: #09120D;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+    position: relative;
+    margin: 0 auto;
+}
+.tk-profile-plus {
+    position: absolute;
+    bottom: -4px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--lime);
+    color: #000 !important;
+    font-size: 0.65rem;
+    font-weight: 900;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+    line-height: 1;
+}
+
+/* Action button rail (Like, Comment, Share, Avatar) */
+div[class*="st-key-avatar_"] {
+    position: absolute; right: 19px; bottom: 330px;
+    z-index: 10; width: auto !important;
+}
+div[class*="st-key-avatar_"] .stButton > button {
+    width: 44px; height: 44px;
+    border-radius: 50% !important;
+    background: #09120D;
+    border: 1.5px solid #fff !important;
+    color: #fff;
+    font-size: 1.35rem;
+    padding: 0 !important;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+    display: flex; align-items: center; justify-content: center;
+    transition: transform 0.15s ease;
+}
+div[class*="st-key-avatar_"] .stButton > button:hover {
+    transform: scale(1.08);
+}
+div[class*="_unfollowed"]::after {
+    content: "+";
+    position: absolute;
+    bottom: -4px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--lime);
+    color: #000 !important;
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    font-weight: 900;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+    line-height: 1;
+    pointer-events: none;
+}
+
+/* Flat back arrow button for profile */
+div[class*="st-key-back_btn"] {
+    position: absolute; left: 16px; top: 12px;
+    z-index: 110; width: auto !important;
+}
+div[class*="st-key-back_btn"] .stButton > button {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    color: var(--text) !important;
+    font-size: 1.8rem !important;
+    padding: 0 !important;
+    width: auto !important; height: auto !important;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+}
+div[class*="st-key-back_btn"] .stButton > button:hover {
+    transform: scale(1.15) !important;
+    color: var(--lime) !important;
+}
+
+/* Burger menu button for profile */
+div[class*="st-key-menu_btn"] {
+    position: absolute; right: 16px; top: 12px;
+    z-index: 110; width: auto !important;
+}
+div[class*="st-key-menu_btn"] .stButton > button {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    color: var(--text) !important;
+    font-size: 1.8rem !important;
+    padding: 0 !important;
+    width: auto !important; height: auto !important;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+}
+div[class*="st-key-menu_btn"] .stButton > button:hover {
+    transform: scale(1.15) !important;
+    color: var(--lime) !important;
+}
+
+/* Follow Button Flat & Sleek */
+div[class*="st-key-follow_btn_unfollowed"] {
+    width: 100% !important;
+    margin-bottom: 0.5rem;
+}
+div[class*="st-key-follow_btn_unfollowed"] button {
+    background: var(--lime) !important;
+    color: var(--ink) !important;
+    border: none !important;
+    border-radius: 12px !important;
+    font-weight: 800 !important;
+    font-size: 0.88rem !important;
+    padding: 0.6rem 1rem !important;
+    box-shadow: 0 4px 12px rgba(168, 255, 96, 0.15) !important;
+    transition: transform 0.15s ease, filter 0.15s ease !important;
+}
+div[class*="st-key-follow_btn_unfollowed"] button:hover {
+    transform: translateY(-1px) !important;
+    filter: brightness(1.08) !important;
+}
+
+div[class*="st-key-follow_btn_followed"] {
+    width: 100% !important;
+    margin-bottom: 0.5rem;
+}
+div[class*="st-key-follow_btn_followed"] button {
+    background: rgba(255, 255, 255, 0.05) !important;
+    color: var(--text) !important;
+    border: 1px solid var(--line-soft) !important;
+    border-radius: 12px !important;
+    font-weight: 700 !important;
+    font-size: 0.88rem !important;
+    padding: 0.6rem 1rem !important;
+    box-shadow: none !important;
+    transition: background 0.15s ease, color 0.15s ease !important;
+}
+div[class*="st-key-follow_btn_followed"] button:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
 div[class*="st-key-like_"] {
-    position: absolute; right: 12px; bottom: 96px;
+    position: absolute; right: 12px; bottom: 252px;
     z-index: 8; width: auto !important;
 }
 div[class*="st-key-like_"] .stButton > button {
@@ -908,15 +1233,58 @@ div[class*="st-key-like_"] .stButton > button {
     border: 1px solid var(--line);
     color: #fff;
     font-family: var(--mono);
-    font-size: .74rem; font-weight: 700;
-    padding: 0; line-height: 1.15;
+    font-size: .7rem; font-weight: 700;
+    padding: 0; line-height: 1.2;
     box-shadow: 0 8px 24px rgba(0,0,0,.45);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
 }
 div[class*="st-key-like_"] .stButton > button:hover {
     transform: scale(1.08);
     border-color: rgba(168,255,96,.6);
-    box-shadow: 0 0 26px rgba(168,255,96,.3);
-    background: rgba(168,255,96,.14);
+}
+
+div[class*="st-key-comment_"] {
+    position: absolute; right: 12px; bottom: 174px;
+    z-index: 8; width: auto !important;
+}
+div[class*="st-key-comment_"] .stButton > button {
+    width: 58px; height: 58px;
+    border-radius: 50% !important;
+    background: rgba(9,18,12,.6);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--line);
+    color: #fff;
+    font-family: var(--mono);
+    font-size: .7rem; font-weight: 700;
+    padding: 0; line-height: 1.2;
+    box-shadow: 0 8px 24px rgba(0,0,0,.45);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+div[class*="st-key-comment_"] .stButton > button:hover {
+    transform: scale(1.08);
+    border-color: rgba(168,255,96,.6);
+}
+
+div[class*="st-key-share_"] {
+    position: absolute; right: 12px; bottom: 96px;
+    z-index: 8; width: auto !important;
+}
+div[class*="st-key-share_"] .stButton > button {
+    width: 58px; height: 58px;
+    border-radius: 50% !important;
+    background: rgba(9,18,12,.6);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--line);
+    color: #fff;
+    font-family: var(--mono);
+    font-size: 1.2rem; font-weight: 700;
+    padding: 0; line-height: 1.15;
+    box-shadow: 0 8px 24px rgba(0,0,0,.45);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+div[class*="st-key-share_"] .stButton > button:hover {
+    transform: scale(1.08);
+    border-color: rgba(168,255,96,.6);
 }
 
 /* Empty feed state */
@@ -1048,6 +1416,7 @@ def goto(page: str) -> None:
         st.session_state["confirm_leave_to"] = page
         return
     st.session_state["page"] = page
+    st.session_state.pop("view_profile_id", None)
 
 
 def request_leave(target: str) -> None:
@@ -1106,46 +1475,86 @@ def feed_card_html(item: dict) -> str:
     )
 
     total = 2 if generated_b64 else 1
-    slides = (
-        f'<div class="tk-slide"><img src="data:image/png;base64,{original_b64}" alt=""/>'
-        f'<div class="tk-tag"><i class="rec"></i>сейчас</div>'
-        f'<div class="tk-num">01/{total:02d}</div></div>'
-    )
+    slides = ""
     if generated_b64:
         slides += (
             f'<div class="tk-slide"><img src="data:image/png;base64,{generated_b64}" alt=""/>'
-            '<div class="tk-tag future">✦ прогноз ИИ</div>'
+            f'<div class="tk-num">01/{total:02d}</div></div>'
+        )
+        slides += (
+            f'<div class="tk-slide"><img src="data:image/png;base64,{original_b64}" alt=""/>'
             f'<div class="tk-num">02/{total:02d}</div></div>'
         )
-    hint = (
-        '<div class="tk-hint">⇆ свайп — прогноз ИИ</div>' if generated_b64 else ""
-    )
+    else:
+        slides += (
+            f'<div class="tk-slide"><img src="data:image/png;base64,{original_b64}" alt=""/>'
+            f'<div class="tk-num">01/{total:02d}</div></div>'
+        )
 
     return (
         f'<div class="tk-card"><div class="tk-swipe">{slides}</div>'
         '<div class="tk-grad top"></div><div class="tk-grad bottom"></div>'
-        '<div class="tk-frame"></div>'
         '<div class="tk-info">'
-        f'<div class="tk-author"><span class="tk-ava">{avatar}</span>'
-        f'<span class="tk-name">@{author}</span>'
-        f'<span class="tk-time">· {when}</span></div>'
-        f'<div class="tk-addr">📍 {address}</div>'
+        f'<div class="tk-addr">{address}</div>'
         f'<div class="tk-meter m-{level}">'
         f'<div class="tk-meter-head"><span>индекс зелени · {label}</span>'
         f"<b>{green_index:.2f}</b></div>"
         f'<div class="tk-meter-bar"><span style="width:{green_index * 100:.0f}%"></span></div>'
-        f"</div>{summary_html}{hint}"
+        f"</div>{summary_html}"
         "</div></div>"
     )
+
+
+@st.dialog("💬 Комментарии")
+def _show_comments_dialog(post_id: str) -> None:
+    user_id = get_current_user_id()
+    comments = load_comments(post_id)
+    
+    comments_html = '<div class="comments-scroll-area">'
+    if not comments:
+        comments_html += "<p style='color: var(--muted); text-align: center; margin: 3rem 0; font-size: 0.9rem;'>Комментариев пока нет. Будьте первым!</p>"
+    else:
+        for c in comments:
+            author_name = html.escape(c.get("author") or "user")
+            avatar_char = html.escape(c.get("avatar") or "🌱")
+            content_text = html.escape(c.get("content", ""))
+            created_time = time_ago(c.get("created_at", ""))
+            comments_html += f"""
+            <div class="comment-item">
+                <div class="comment-avatar">{avatar_char}</div>
+                <div class="comment-content">
+                    <div class="comment-header">
+                        <span class="comment-author">@{author_name}</span>
+                        <span class="comment-time">{created_time}</span>
+                    </div>
+                    <p class="comment-text">{content_text}</p>
+                </div>
+            </div>
+            """
+    comments_html += '</div>'
+    st.markdown(comments_html, unsafe_allow_html=True)
+    
+    with st.form("new_comment_form", border=False):
+        c1, c2 = st.columns([5.0, 1.0])
+        with c1:
+            new_content = st.text_input("Напишите комментарий...", placeholder="Добавить комментарий...", label_visibility="collapsed")
+        with c2:
+            if st.form_submit_button("💬", type="primary", use_container_width=True):
+                if new_content.strip():
+                    if user_id:
+                        save_comment(user_id, post_id, new_content.strip())
+                        _bump_data_version()
+                        st.rerun()
+                    else:
+                        st.error("Пожалуйста, войдите в аккаунт.")
 
 
 def render_feed() -> None:
     st.markdown(FEED_CSS, unsafe_allow_html=True)
     st.markdown(
         """
-        <div class="tk-top">
+        <div class="tk-top" style="justify-content: center;">
             <span class="tk-logo">ECO//RE</span>
-            <span class="tk-live"><i></i>город live</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1179,18 +1588,127 @@ def render_feed() -> None:
             item_id = item["id"]
             with st.container(key=f"card_{item_id}"):
                 st.markdown(feed_card_html(item), unsafe_allow_html=True)
+                
+                # 0. Avatar button (bottom: 330px)
+                author_id = item.get("user_id")
+                is_following_author = is_following(user_id, author_id) if user_id and author_id else False
+                is_self = (user_id == author_id) if user_id and author_id else True
+                
+                avatar_key_suffix = "self" if is_self else ("followed" if is_following_author else "unfollowed")
+                avatar_key = f"avatar_{item_id}_{avatar_key_suffix}"
+                
+                if st.button(item.get("avatar", "🌱"), key=avatar_key):
+                    if author_id:
+                        st.session_state["view_profile_id"] = author_id
+                        st.session_state["page"] = "profile"
+                        st.rerun()
+                
+                # 1. Like button (bottom: 252px)
                 like_count = int(item.get("likes", 0))
                 is_liked = item_id in liked_post_ids
-                btn_label = f"💚 {like_count}" if is_liked else f"🔥 {like_count}"
-                if st.button(btn_label, key=f"like_{item_id}"):
+                like_label = f"💚\n{like_count}" if is_liked else f"🔥\n{like_count}"
+                if st.button(like_label, key=f"like_{item_id}"):
                     if user_id:
                         now_liked, new_count = toggle_like(user_id, item_id)
-                        if now_liked:
-                            liked_post_ids.add(item_id)
-                        else:
-                            liked_post_ids.discard(item_id)
                         _bump_data_version()
                         st.rerun()
+                
+                # 2. Comment button (bottom: 174px)
+                c_count = item.get("comments_count", 0)
+                comment_label = f"💬\n{c_count}"
+                if st.button(comment_label, key=f"comment_{item_id}"):
+                    _show_comments_dialog(item_id)
+                
+                # 3. Share button (bottom: 96px)
+                if st.button("🔗", key=f"share_{item_id}"):
+                    st.session_state["flash"] = "Ссылка на пост скопирована! 🔗"
+                    # Add tiny JS to copy to clipboard
+                    components.html(
+                        f"""<script>
+                        navigator.clipboard.writeText(window.parent.location.origin + "/?post={item_id}");
+                        </script>""",
+                        height=0,
+                    )
+                    st.rerun()
+
+    # Inject Drag-Emulation JS Script
+    st.markdown("""
+    <script>
+    (function() {
+        function initDragEmulation() {
+            const containers = document.querySelectorAll('.tk-swipe');
+            containers.forEach(container => {
+                if (container.dataset.dragInitialized) return;
+                container.dataset.dragInitialized = 'true';
+
+                let isDown = false;
+                let startX;
+                let scrollLeft;
+
+                container.addEventListener('mousedown', (e) => {
+                    isDown = true;
+                    startX = e.pageX - container.offsetLeft;
+                    scrollLeft = container.scrollLeft;
+                    container.style.scrollSnapType = 'none';
+                    container.style.scrollBehavior = 'auto';
+                });
+
+                container.addEventListener('mouseleave', () => {
+                    if (!isDown) return;
+                    isDown = false;
+                    container.style.scrollSnapType = 'x mandatory';
+                });
+
+                container.addEventListener('mouseup', () => {
+                    if (!isDown) return;
+                    isDown = false;
+                    container.style.scrollSnapType = 'x mandatory';
+                    
+                    const width = container.offsetWidth;
+                    const scrollPos = container.scrollLeft;
+                    const slideIndex = Math.round(scrollPos / width);
+                    container.style.scrollBehavior = 'smooth';
+                    container.scrollTo({ left: slideIndex * width });
+                    
+                    // Update tag/counter manually since native scroll snap changed
+                    const card = container.closest('.tk-card');
+                    if (card) {
+                        const num = card.querySelector('.tk-num');
+                        const hint = card.querySelector('.tk-hint');
+                        if (num) {
+                            const totalVal = num.textContent.split('/')[1] || '02';
+                            num.textContent = `${(slideIndex + 1).toString().padStart(2, '0')}/${totalVal}`;
+                        }
+                        if (hint) {
+                            hint.innerHTML = slideIndex === 0 ? '⇆ свайп — сейчас' : '⇆ свайп — прогноз ИИ';
+                        }
+                    }
+                });
+
+                container.addEventListener('mousemove', (e) => {
+                    if(!isDown) return;
+                    e.preventDefault();
+                    const x = e.pageX - container.offsetLeft;
+                    const walk = (x - startX) * 1.5;
+                    container.scrollLeft = scrollLeft - walk;
+                });
+            });
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initDragEmulation);
+        } else {
+            initDragEmulation();
+        }
+        
+        if (!window.hasDragInterval) {
+            window.hasDragInterval = true;
+            setInterval(initDragEmulation, 800);
+        }
+    })();
+    </script>
+    """, unsafe_allow_html=True)
+
 
 
 # ===========================================================================
@@ -1253,21 +1771,15 @@ def render_camera() -> None:
 
     st.markdown(CAMERA_CSS, unsafe_allow_html=True)
 
-    head_left, head_right = st.columns([3, 1])
-    with head_left:
-        st.markdown(
-            """
-            <div class="page-head">
-                <div class="kicker">// новое решение</div>
-                <h1>Сканер улицы</h1>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with head_right:
-        st.button(
-            "✕ Выход", key="camera_exit", on_click=request_leave, args=("feed",)
-        )
+    st.markdown(
+        """
+        <div class="page-head">
+            <div class="kicker">// новое решение</div>
+            <h1>Сканер улицы</h1>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     source_mode = st.segmented_control(
         "Источник фото",
@@ -1634,10 +2146,22 @@ def render_top() -> None:
         # --- Podium for the top-3 (2nd · 1st · 3rd, like real podiums) ----
         if len(ranked) >= 3:
             podium_order = [(ranked[1], 2), (ranked[0], 1), (ranked[2], 3)]
-            base_heights = {1: 44, 2: 28, 3: 16}
-            cols = st.columns([1, 1.18, 1])
+            cols = st.columns([1, 1.12, 1])
             for col, (item, rank) in zip(cols, podium_order):
                 with col:
+                    gvi = float(item.get("green_index", 0.0))
+                    if gvi < 0.4:
+                        gvi_color = "#FF7A5C"
+                    elif gvi < 0.7:
+                        gvi_color = "#FFC24B"
+                    else:
+                        gvi_color = "#A8FF60"
+                        
+                    author = html.escape(item.get("author") or "eco_citizen")
+                    avatar = html.escape(item.get("avatar") or "🌱")
+                    address = html.escape(item.get("address", "Без адреса"))
+                    votes = int(item.get("likes", 0))
+                    
                     st.markdown(
                         f"""
                         <div class="pod-card pod-{rank}">
@@ -1645,9 +2169,15 @@ def render_top() -> None:
                                 <img src="{_thumb_src(item)}" alt=""/>
                                 <div class="pod-rank">{rank}</div>
                             </div>
-                            <div class="pod-addr">📍 {html.escape(item.get("address", "Без адреса"))}</div>
-                            <div class="pod-fire">🔥 {int(item.get("likes", 0))}</div>
-                            <div class="pod-base" style="--h:{base_heights[rank]}px"></div>
+                            <div class="pod-addr">{address}</div>
+                            <div class="pod-stats">
+                                <span class="pod-fire">🔥 {votes}</span>
+                                <span class="pod-gvi-badge" style="background: {gvi_color}18; color: {gvi_color}; border: 1px solid {gvi_color}35;">{gvi:.2f}</span>
+                            </div>
+                            <div class="pod-author">
+                                <span class="pod-avatar">{avatar}</span>
+                                <span class="pod-username">@{author}</span>
+                            </div>
                         </div>
                         """,
                         unsafe_allow_html=True,
@@ -1659,143 +2189,79 @@ def render_top() -> None:
             start_rank = 1
 
         if rest:
-            st.markdown("<div style='height:.9rem'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='height:1.2rem'></div>", unsafe_allow_html=True)
         rows_html = ""
         for offset, item in enumerate(rest):
             votes = int(item.get("likes", 0))
             author = html.escape(item.get("author") or "eco_citizen")
+            avatar = html.escape(item.get("avatar") or "🌱")
+            address = html.escape(item.get("address", "Без адреса"))
             rows_html += (
                 f'<div class="lb-row"><div class="lb-rank">{start_rank + offset:02d}</div>'
                 f'<img class="lb-thumb" src="{_thumb_src(item)}" alt=""/>'
-                f'<div class="lb-main"><div class="lb-addr">📍 {html.escape(item.get("address", "Без адреса"))}</div>'
+                f'<div class="lb-main"><div class="lb-addr">{address}</div>'
                 f'<div class="lb-votebar"><span style="width:{votes / max_votes * 100:.0f}%"></span></div>'
-                f'<div class="lb-sub">@{author} · gvi {float(item.get("green_index", 0.0)):.2f}</div></div>'
+                f'<div class="lb-sub">{avatar} @{author} · gvi {float(item.get("green_index", 0.0)):.2f}</div></div>'
                 f'<div class="lb-fire">🔥 {votes}</div></div>'
             )
         if rows_html:
             st.markdown(rows_html, unsafe_allow_html=True)
 
-    # --- Akimat decision panel (kept from the old dashboard tab) -----------
-    if all_items and st.toggle("🏛 Режим акимата — аналитика для города"):
-        df = pd.DataFrame(
-            [
-                {
-                    "Локация": item.get("address", "Без адреса"),
-                    "Green Index": float(item.get("green_index", 0.0)),
-                    "Голоса": int(item.get("likes", 0)),
-                    "Дата": format_timestamp(item.get("timestamp", "")),
-                }
-                for item in all_items
-            ]
-        )
 
-        total_submissions = len(df)
-        average_green_index = df["Green Index"].mean()
-        top_location = df.groupby("Локация")["Голоса"].sum().idxmax()
+@st.dialog("⚙️ Настройки и конфиденциальность")
+def _show_settings_dialog() -> None:
+    current_user_id = get_current_user_id()
+    db_user = get_current_user()
+    profile_avatar = db_user.get("avatar") or "🌱"
+    profile_email = db_user.get("email") or ""
 
-        kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
-        kpi_col1.markdown(
-            f"""<div class="kpi-card"><div class="kpi-value">{total_submissions}</div>
-            <div class="kpi-label">Заявок</div></div>""",
-            unsafe_allow_html=True,
-        )
-        kpi_col2.markdown(
-            f"""<div class="kpi-card"><div class="kpi-value">{average_green_index:.2f}</div>
-            <div class="kpi-label">Средний GVI</div></div>""",
-            unsafe_allow_html=True,
-        )
-        kpi_col3.markdown(
-            f"""<div class="kpi-card"><div class="kpi-value" style="font-size:.72rem;">{html.escape(top_location)}</div>
-            <div class="kpi-label">Топ запрос</div></div>""",
-            unsafe_allow_html=True,
-        )
-
-        st.markdown(
-            '<div class="section-title">📊 Экологическая срочность × Запрос горожан</div>',
-            unsafe_allow_html=True,
-        )
-        st.caption("Левый верхний угол — критичные зоны: мало зелени, много голосов.")
-
-        scatter_fig = px.scatter(
-            df,
-            x="Green Index",
-            y="Голоса",
-            size=df["Голоса"].clip(lower=1),
-            color="Green Index",
-            color_continuous_scale=["#FF7A5C", "#FFC24B", "#74C69D", "#A8FF60"],
-            hover_name="Локация",
-            size_max=42,
-        )
-        scatter_fig.update_layout(
-            height=360,
-            margin=dict(l=10, r=10, t=10, b=10),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(family="Manrope, sans-serif", color="#ECF5EE"),
-            coloraxis_colorbar=dict(title="GVI"),
-            xaxis=dict(title="Green View Index (меньше = хуже)", gridcolor="#1C2A21"),
-            yaxis=dict(title="Голоса горожан", gridcolor="#1C2A21"),
-        )
-        st.plotly_chart(scatter_fig, width="stretch", config={"displayModeBar": False})
-
-        st.markdown(
-            '<div class="section-title">🚨 Топ-5 зон для бюджета благоустройства</div>',
-            unsafe_allow_html=True,
-        )
-        st.caption("Приоритет = голоса × (1 − Green Index): высокий спрос при дефиците зелени.")
-
-        critical_df = df.copy()
-        critical_df["Приоритет"] = (
-            critical_df["Голоса"] * (1.0 - critical_df["Green Index"])
-        ).round(2)
-        top_critical = (
-            critical_df.sort_values("Приоритет", ascending=False)
-            .head(5)
-            .reset_index(drop=True)
-        )
-        top_critical.index += 1
-
-        st.dataframe(
-            top_critical[["Локация", "Green Index", "Голоса", "Приоритет", "Дата"]],
-            width="stretch",
-            column_config={
-                "Green Index": st.column_config.ProgressColumn(
-                    "Green Index", min_value=0.0, max_value=1.0, format="%.2f"
-                ),
-            },
-        )
-
-        if st.button("🤖 Сгенерировать отчёт для акимата"):
-            if not free_ai_available():
-                st.info("Добавьте HF_API_TOKEN в secrets.toml для ИИ-анализа")
-            else:
-                top_zones_list = top_critical[
-                    ["Локация", "Green Index", "Голоса", "Приоритет"]
-                ].to_dict("records")
-                with st.spinner("🤖 ИИ готовит аналитический отчёт..."):
-                    dashboard_report = generate_dashboard_report(top_zones_list)
-                if dashboard_report:
-                    st.session_state["dashboard_report"] = dashboard_report
-                else:
-                    st.info("Добавьте HF_API_TOKEN в secrets.toml для ИИ-анализа")
-
-        if st.session_state.get("dashboard_report"):
-            with st.expander("📋 Аналитический отчёт", expanded=True):
-                st.markdown(st.session_state["dashboard_report"])
+    st.markdown('<div style="margin-top: 10px;"></div>', unsafe_allow_html=True)
+    with st.form("dialog_profile_form", border=False):
+        current_idx = AVATARS.index(profile_avatar) if profile_avatar in AVATARS else 0
+        new_avatar = st.selectbox("Изменить аватар", AVATARS, index=current_idx)
+        if profile_email:
+            st.caption(f"📧 {profile_email}")
+        if st.form_submit_button("💾 Сохранить", type="primary", use_container_width=True):
+            if current_user_id:
+                update_user_avatar(current_user_id, new_avatar)
+                st.session_state["db_user"]["avatar"] = new_avatar
+                st.session_state["flash"] = "Аватар обновлён ✅"
+                st.rerun()
+            
+    st.markdown("<hr style='border-color: rgba(255,255,255,0.08); margin: 1.2rem 0;'>", unsafe_allow_html=True)
+    if st.button("🚪 Выйти из аккаунта", type="primary", use_container_width=True):
+        logout()
+        st.rerun()
 
 
 # ===========================================================================
 # Profile page — aurora banner, gradient-ring avatar, solutions grid
 # ===========================================================================
 def render_profile() -> None:
-    db_user = get_current_user()
-    user_id = get_current_user_id()
+    current_user_id = get_current_user_id()
+    target_user_id = st.session_state.get("view_profile_id")
+    
+    is_own_profile = (target_user_id is None) or (target_user_id == current_user_id)
+    
+    if is_own_profile:
+        db_user = get_current_user()
+        profile_user_id = current_user_id
+    else:
+        db_user = get_user_by_id(target_user_id)
+        if not db_user:
+            st.error("Пользователь не найден.")
+            if st.button("← Вернуться в ленту", use_container_width=True):
+                st.session_state.pop("view_profile_id", None)
+                st.session_state["page"] = "feed"
+                st.rerun()
+            return
+        profile_user_id = target_user_id
 
-    profile_name = db_user.get("name") or "eco_citizen"
+    profile_name = db_user.get("username") or db_user.get("name") or "eco_citizen"
     profile_avatar = db_user.get("avatar") or "🌱"
     profile_email = db_user.get("email") or ""
 
-    my_items = get_user_posts(user_id) if user_id else []
+    my_items = get_user_posts(profile_user_id) if profile_user_id else []
 
     total_fires = sum(int(i.get("likes", 0)) for i in my_items)
     average_gvi = (
@@ -1804,18 +2270,59 @@ def render_profile() -> None:
         else 0.0
     )
 
+    # If it is not our own profile, show a back button
+    if not is_own_profile:
+        if st.button("←", key="back_btn"):
+            st.session_state.pop("view_profile_id", None)
+            st.session_state["page"] = "feed"
+            st.rerun()
+
+    # If it is our own profile, show the menu burger button at the top-right
+    if is_own_profile:
+        if st.button("☰", key="menu_btn"):
+            _show_settings_dialog()
+
     st.markdown(
         f"""
-        <div class="pf-banner">
-            <div class="pf-ava">{html.escape(profile_avatar)}</div>
+        <div class="pf-ava-container">
+            <div class="pf-ava-standalone">{html.escape(profile_avatar)}</div>
         </div>
         <div class="pf-name">@{html.escape(profile_name)}</div>
-        <div class="pf-sub">эко-активист // город-сканер</div>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown("<div style='height:.9rem'></div>", unsafe_allow_html=True)
+    # Followers / Following / Likes counter (TikTok-style)
+    followers_cnt = get_followers_count(profile_user_id) if profile_user_id else 0
+    following_cnt = get_following_count(profile_user_id) if profile_user_id else 0
+    st.markdown(
+        f"""
+        <div style="display: flex; justify-content: center; gap: 24px; margin: 0.9rem 0; font-family: var(--mono); font-size: 0.85rem; text-align: center;">
+            <div><b style="color: var(--text); font-size: 1.05rem;">{following_cnt}</b><div style="color: var(--muted); font-size: 0.64rem; text-transform: uppercase; margin-top: 2px;">Подписок</div></div>
+            <div><b style="color: var(--text); font-size: 1.05rem;">{followers_cnt}</b><div style="color: var(--muted); font-size: 0.64rem; text-transform: uppercase; margin-top: 2px;">Подписчиков</div></div>
+            <div><b style="color: var(--text); font-size: 1.05rem;">{total_fires}</b><div style="color: var(--muted); font-size: 0.64rem; text-transform: uppercase; margin-top: 2px;">Лайков</div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Follow button if it's someone else's profile
+    if not is_own_profile and profile_user_id:
+        if current_user_id:
+            is_following_user = is_following(current_user_id, profile_user_id)
+            if is_following_user:
+                if st.button("Вы подписаны", key="follow_btn_followed", use_container_width=True):
+                    toggle_follow(current_user_id, profile_user_id)
+                    st.rerun()
+            else:
+                if st.button("Подписаться", key="follow_btn_unfollowed", use_container_width=True):
+                    toggle_follow(current_user_id, profile_user_id)
+                    st.rerun()
+        else:
+            if st.button("Подписаться", key="follow_btn_unfollowed", use_container_width=True):
+                st.warning("Пожалуйста, войдите в аккаунт, чтобы подписываться.")
+
+    st.markdown("<div style='height:.4rem'></div>", unsafe_allow_html=True)
     kpi1, kpi2, kpi3 = st.columns(3)
     kpi1.markdown(
         f"""<div class="kpi-card"><div class="kpi-value">{len(my_items)}</div>
@@ -1833,33 +2340,21 @@ def render_profile() -> None:
         unsafe_allow_html=True,
     )
 
-    with st.expander("⚙️ Настройки профиля"):
-        with st.form("profile_form", border=False):
-            current_idx = AVATARS.index(profile_avatar) if profile_avatar in AVATARS else 0
-            new_avatar = st.selectbox("Аватар", AVATARS, index=current_idx)
-            if profile_email:
-                st.caption(f"📧 {profile_email}")
-            if st.form_submit_button("💾 Сохранить аватар"):
-                if user_id:
-                    update_user_avatar(user_id, new_avatar)
-                    st.session_state["db_user"]["avatar"] = new_avatar
-                    st.session_state["flash"] = "Аватар обновлён ✅"
-                    st.rerun()
-
-    if st.button("🚪 Выйти из аккаунта", use_container_width=True):
-        logout()
-        st.rerun()
-
+    title_text = "✦ Мои решения" if is_own_profile else f"✦ Решения @{profile_name}"
     st.markdown(
-        '<div class="section-title">✦ Мои решения</div>', unsafe_allow_html=True
+        f'<div class="section-title">{title_text}</div>', unsafe_allow_html=True
     )
 
     if not my_items:
+        no_posts_msg = (
+            "Пока нет публикаций.<br/>Нажми ◉ внизу и предложи первое зелёное решение!"
+            if is_own_profile
+            else "Этот пользователь еще не опубликовал ни одного решения."
+        )
         st.markdown(
-            """
+            f"""
             <div class="eco-card" style="text-align:center;color:var(--muted);">
-                Пока нет публикаций.<br/>Нажми ◉ внизу и предложи первое
-                зелёное решение для своего города!
+                {no_posts_msg}
             </div>
             """,
             unsafe_allow_html=True,
@@ -1883,28 +2378,161 @@ def render_profile() -> None:
 
 
 # ===========================================================================
+# Inbox page — mock official city updates and activity notifications
+# ===========================================================================
+def render_inbox() -> None:
+    st.markdown(
+        """
+        <div class="page-head">
+            <div class="kicker">// уведомления и вызовы среды</div>
+            <h1>Входящие</h1>
+            <p>Официальные ответы акимата, новые эко-челленджи и активность</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    tab_all, tab_official, tab_activity = st.tabs(["⚡ Все", "🏛️ Официальные", "🔥 Активность"])
+
+    notifications = [
+        {
+            "category": "official",
+            "icon": "🏛️",
+            "title": "Акимат г. Алматы",
+            "text": "ИИ-проект озеленения по ул. Абая прошел модерацию и передан в Управление Экологии.",
+            "time": "2 ч. назад",
+            "badge": "В работе",
+            "color": "var(--teal)",
+        },
+        {
+            "category": "activity",
+            "icon": "🔥",
+            "title": "Лайк от @eco_almaty",
+            "text": "Ваше решение по адресу пр. Достык, 12 получило отметку 'Огонь!' (+10 очков рейтинга).",
+            "time": "5 ч. назад",
+            "badge": "Рейтинг",
+            "color": "var(--lime)",
+        },
+        {
+            "category": "official",
+            "icon": "🚨",
+            "title": "Департамент экологии",
+            "text": "Работы по ликвидации свалки по вашему обращению в Алатауском районе успешно завершены.",
+            "time": "1 д. назад",
+            "badge": "Выполнено",
+            "color": "var(--lime)",
+        },
+        {
+            "category": "activity",
+            "icon": "💬",
+            "title": "Комментарий от @green_rider",
+            "text": "«Отличная идея с вертикальным озеленением! Вдоль оживленной трассы это просто необходимо.»",
+            "time": "2 д. назад",
+            "badge": "Обсуждение",
+            "color": "var(--muted)",
+        },
+        {
+            "category": "official",
+            "icon": "⚡",
+            "title": "Новый городской вызов",
+            "text": "Запущен челлендж 'Зеленый Бостандыкский'. Создайте 3 эко-решения в районе и получите х2 баллов.",
+            "time": "3 д. назад",
+            "badge": "Челлендж",
+            "color": "var(--amber)",
+        },
+        {
+            "category": "activity",
+            "icon": "🏆",
+            "title": "Достижение получено!",
+            "text": "Вы заработали значок 'Эко-Визионер' за первую генерацию зеленого будущего для улицы города.",
+            "time": "5 д. назад",
+            "badge": "Ачивка",
+            "color": "var(--teal)",
+        },
+    ]
+
+    def draw_list(items):
+        if not items:
+            st.markdown(
+                """
+                <div class="eco-card" style="text-align:center;color:var(--muted);padding:2rem;">
+                    Здесь пока пусто. Активность появится, когда вы будете публиковать решения или участвовать в жизни города!
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            return
+        for item in items:
+            st.markdown(
+                f"""
+                <div class="inbox-row">
+                    <div class="inbox-icon">{item['icon']}</div>
+                    <div class="inbox-content">
+                        <div class="inbox-title-wrap">
+                            <span class="inbox-title">{html.escape(item['title'])}</span>
+                            <span class="inbox-time">{html.escape(item['time'])}</span>
+                        </div>
+                        <div class="inbox-text">{html.escape(item['text'])}</div>
+                        <div class="inbox-badge" style="color: {item['color']}; border-color: {item['color']}2a; background-color: {item['color']}0f;">
+                            {html.escape(item['badge'])}
+                        </div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    with tab_all:
+        draw_list(notifications)
+
+    with tab_official:
+        draw_list([n for n in notifications if n["category"] == "official"])
+
+    with tab_activity:
+        draw_list([n for n in notifications if n["category"] == "activity"])
+
+
+# ===========================================================================
 # Floating glass dock — bottom nav
 # ===========================================================================
 def render_nav(active_page: str) -> None:
     with st.container(key="bottom_nav"):
-        col_feed, col_camera, col_top, col_profile = st.columns([2, 0.95, 0.92, 1.13])
+        col_feed, col_top, col_camera, col_inbox, col_profile = st.columns([1, 1, 1, 1.1, 1])
         with col_feed:
-            st.button("Лента", key="nav_feed", on_click=goto, args=("feed",), width="stretch")
-        with col_camera:
-            st.button("◉", key="nav_camera", on_click=goto, args=("camera",))
+            st.button("📺\nЛента", key="nav_feed", on_click=goto, args=("feed",), use_container_width=True)
         with col_top:
-            st.button("Топ", key="nav_top", on_click=goto, args=("top",), width="stretch")
+            st.button("🏆\nТоп", key="nav_top", on_click=goto, args=("top",), use_container_width=True)
+        with col_camera:
+            st.button("📷\nСканер", key="nav_camera", on_click=goto, args=("camera",), use_container_width=True)
+        with col_inbox:
+            st.button("⚡\nВходящие", key="nav_inbox", on_click=goto, args=("inbox",), use_container_width=True)
         with col_profile:
-            st.button("Профиль", key="nav_profile", on_click=goto, args=("profile",), width="stretch")
+            st.button("👤\nПрофиль", key="nav_profile", on_click=goto, args=("profile",), use_container_width=True)
 
-    if active_page != "camera":
+    if active_page == "camera":
+        st.markdown(
+            """<style>
+            .st-key-bottom_nav .st-key-nav_camera button {
+                background: rgba(168, 255, 96, 0.08) !important;
+                color: var(--lime) !important;
+                border: 1.5px solid var(--lime) !important;
+                box-shadow: 0 0 12px rgba(168, 255, 96, 0.2) !important;
+                text-shadow: 0 0 10px rgba(168, 255, 96, 0.4) !important;
+                font-weight: 800 !important;
+            }
+            </style>""",
+            unsafe_allow_html=True,
+        )
+    else:
         st.markdown(
             f"""<style>.st-key-nav_{active_page} button{{
-                color: var(--lime) !important;
-                text-shadow: 0 0 14px rgba(168,255,96,.55);
+                color: #ffffff !important;
+                text-shadow: 0 0 10px rgba(255,255,255,.5);
+                font-weight: 800 !important;
             }}</style>""",
             unsafe_allow_html=True,
         )
+
 
 
 # ===========================================================================
@@ -1930,6 +2558,8 @@ elif current_page == "top":
     render_top()
 elif current_page == "profile":
     render_profile()
+elif current_page == "inbox":
+    render_inbox()
 else:
     render_feed()
 

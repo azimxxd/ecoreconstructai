@@ -36,7 +36,7 @@ addresses = [
 for i, (address, likes, author, avatar) in enumerate(addresses):
     photo = fake_street_photo(seed=i)
     masked, gvi = analyze_eco_status(photo)
-    concept = generate_eco_friendly_view(photo, gvi)
+    concept = generate_eco_friendly_view(photo, {"green_view_index": gvi})
     db.save_item({
         "address": address,
         "green_index": round(gvi, 3),
@@ -47,4 +47,4 @@ for i, (address, likes, author, avatar) in enumerate(addresses):
         "avatar": avatar,
         "ai_summary": "Серый двор с дефицитом зелени — нужны деревья и тень.",
     })
-print("seeded", len(db.load_db()), "items")
+print("seeded", len(db.load_all_posts()), "items")
