@@ -34,7 +34,20 @@ from psycopg2.extras import RealDictCursor
 @st.cache_resource(show_spinner=False)
 def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
     url: str = st.secrets["database"]["url"]
-    pool = psycopg2.pool.ThreadedConnectionPool(1, 8, url)
+    # Ensure SSL — required by Supabase when connecting from cloud hosts.
+    if "sslmode" not in url:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}sslmode=require"
+    try:
+        pool = psycopg2.pool.ThreadedConnectionPool(1, 8, url)
+    except psycopg2.OperationalError as exc:
+        st.error(
+            "⚠️ Не удалось подключиться к базе данных Supabase. "
+            "Убедитесь, что в секретах Streamlit Cloud указан URL "
+            "Transaction pooler (порт 6543), а не прямое подключение (5432). "
+            f"Детали: {exc}"
+        )
+        raise
     _init_schema(pool)
     return pool
 
