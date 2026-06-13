@@ -105,14 +105,22 @@ def generate_eco_view_openai(
 
     try:
         client = OpenAI(api_key=api_key)
-        # input_fidelity="high" keeps the original structure; retry without it
-        # for older SDKs / models that don't expose the parameter.
+        # input_fidelity="high" keeps the original structure, but not every
+        # image model accepts it: older SDKs raise TypeError (unknown param),
+        # and some models (e.g. gpt-image-2) reject it with a 400. In both
+        # cases retry once without the parameter instead of failing over to
+        # the free pipeline.
         try:
             result = client.images.edit(
                 image=_png_buffer(), input_fidelity="high", **base_kwargs
             )
         except TypeError:
             result = client.images.edit(image=_png_buffer(), **base_kwargs)
+        except Exception as exc:
+            if "input_fidelity" in str(exc):
+                result = client.images.edit(image=_png_buffer(), **base_kwargs)
+            else:
+                raise
 
         b64 = result.data[0].b64_json
         if not b64:
