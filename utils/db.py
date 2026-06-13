@@ -2,7 +2,8 @@
 EcoReconstruct AI — Postgres database layer (Supabase).
 
 Tables:
-  users  — Google-authenticated accounts (google_sub = unique OIDC sub).
+  users  — accounts authenticated by username + password (PBKDF2 hash).
+           Legacy column ``google_sub`` is kept (nullable) for old rows.
   posts  — citizen eco-audit submissions.
   likes  — per-user per-post likes; PRIMARY KEY (user_id, post_id) enforces
             the "1 account = 1 like" rule at the database level.
@@ -19,7 +20,12 @@ deployment and shared across all concurrent user sessions.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
+import os
+import time
 from typing import Any
 
 import psycopg2
@@ -58,13 +64,23 @@ def _init_schema(pool: psycopg2.pool.ThreadedConnectionPool) -> None:
         with conn.cursor() as cur:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
-                    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-                    google_sub  TEXT        UNIQUE NOT NULL,
-                    email       TEXT,
-                    name        TEXT,
-                    avatar      TEXT        NOT NULL DEFAULT '🌱',
-                    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+                    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                    username      TEXT,
+                    password_hash TEXT,
+                    google_sub    TEXT,
+                    email         TEXT,
+                    name          TEXT,
+                    avatar        TEXT        NOT NULL DEFAULT '🌱',
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
                 );
+
+                -- Migrate older deployments that still have the Google-only schema.
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS username      TEXT;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+                ALTER TABLE users ALTER COLUMN google_sub DROP NOT NULL;
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username
+                    ON users (lower(username)) WHERE username IS NOT NULL;
 
                 CREATE TABLE IF NOT EXISTS posts (
                     id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -123,29 +139,173 @@ def init_db() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Password hashing (PBKDF2-HMAC-SHA256, stdlib only — no extra dependency)
+# ---------------------------------------------------------------------------
+
+_PBKDF2_ITERATIONS = 200_000
+
+
+def _hash_password(password: str) -> str:
+    """Return a salted PBKDF2 hash encoded as ``salt_hex$hash_hex``."""
+    salt = os.urandom(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, _PBKDF2_ITERATIONS
+    )
+    return f"{salt.hex()}${digest.hex()}"
+
+
+def _verify_password(password: str, stored: str | None) -> bool:
+    """Constant-time check of *password* against a stored PBKDF2 hash."""
+    if not stored or "$" not in stored:
+        return False
+    salt_hex, digest_hex = stored.split("$", 1)
+    try:
+        salt = bytes.fromhex(salt_hex)
+    except ValueError:
+        return False
+    candidate = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, _PBKDF2_ITERATIONS
+    )
+    return hmac.compare_digest(candidate.hex(), digest_hex)
+
+
+# ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------
 
-def upsert_user(google_sub: str, email: str | None, name: str | None) -> dict[str, Any]:
+
+class AuthError(Exception):
+    """Raised for expected, user-facing auth failures (shown in the UI)."""
+
+
+def _public_user(row: dict) -> dict[str, Any]:
+    """Strip the password hash before a row enters session_state."""
+    user = {k: v for k, v in row.items() if k != "password_hash"}
+    user["id"] = str(user["id"])
+    return user
+
+
+def register_user(username: str, email: str | None, password: str) -> dict[str, Any]:
     """
-    Insert user on first login; update email/name on subsequent logins.
-    Returns the full user row as a dict.
+    Create a new account. ``name`` defaults to the username so the rest of the
+    UI (feed author, profile) keeps working unchanged.
+
+    Raises AuthError if the username is already taken.
     """
+    username = username.strip()
+    email = (email or "").strip() or None
+    with _DB() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT 1 FROM users WHERE lower(username) = lower(%s)",
+                (username,),
+            )
+            if cur.fetchone() is not None:
+                raise AuthError("Это имя пользователя уже занято.")
+            cur.execute(
+                """
+                INSERT INTO users (username, email, name, password_hash)
+                VALUES (%(username)s, %(email)s, %(name)s, %(pw)s)
+                RETURNING *
+                """,
+                {
+                    "username": username,
+                    "email": email,
+                    "name": username,
+                    "pw": _hash_password(password),
+                },
+            )
+            return _public_user(cur.fetchone())
+
+
+def authenticate_user(login: str, password: str) -> dict[str, Any]:
+    """
+    Verify credentials (username or email + password).
+
+    Raises AuthError on unknown user or wrong password.
+    """
+    login = login.strip()
     with _DB() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                INSERT INTO users (google_sub, email, name)
-                VALUES (%(sub)s, %(email)s, %(name)s)
-                ON CONFLICT (google_sub) DO UPDATE
-                    SET email = EXCLUDED.email,
-                        name  = COALESCE(EXCLUDED.name, users.name)
-                RETURNING *
+                SELECT * FROM users
+                WHERE lower(username) = lower(%s) OR lower(email) = lower(%s)
+                LIMIT 1
                 """,
-                {"sub": google_sub, "email": email, "name": name},
+                (login, login),
             )
             row = cur.fetchone()
-            return {**row, "id": str(row["id"])}
+    if row is None or not _verify_password(password, row.get("password_hash")):
+        raise AuthError("Неверное имя пользователя или пароль.")
+    return _public_user(row)
+
+
+def get_user_by_id(user_id: str) -> dict[str, Any] | None:
+    """Fetch a user by UUID (used to restore a session from a cookie token)."""
+    with _DB() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+    return _public_user(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# "Stay logged in" cookie token — HMAC-signed user_id with an expiry.
+# Lets the app restore the session after a full page reload (Streamlit clears
+# st.session_state on reload). The token only carries the user id + expiry; it
+# is verified server-side and the user is re-fetched from the DB.
+# ---------------------------------------------------------------------------
+
+_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 days
+
+
+def _auth_secret() -> str:
+    """Signing key for the persistent-login cookie (kept off the client)."""
+    try:
+        configured = st.secrets["app"]["secret_key"]
+        if configured:
+            return str(configured)
+    except Exception:
+        pass
+    # Fallback: derive a stable per-deployment key from the DB URL so tokens
+    # stay valid across reruns without extra configuration.
+    try:
+        return "eco-auth::" + str(st.secrets["database"]["url"])
+    except Exception:
+        return "eco-auth::insecure-dev-secret"
+
+
+def make_auth_token(user_id: str) -> str:
+    """Return a signed, URL-safe token encoding ``user_id`` and an expiry."""
+    expires_at = str(int(time.time()) + _TOKEN_TTL_SECONDS)
+    message = f"{user_id}.{expires_at}"
+    signature = hmac.new(
+        _auth_secret().encode(), message.encode(), hashlib.sha256
+    ).hexdigest()
+    return base64.urlsafe_b64encode(f"{message}.{signature}".encode()).decode()
+
+
+def verify_auth_token(token: str) -> dict[str, Any] | None:
+    """Validate a cookie token and return the user dict, or None if invalid."""
+    if not token:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(token.encode()).decode()
+        user_id, expires_at, signature = raw.rsplit(".", 2)
+    except Exception:
+        return None
+    expected = hmac.new(
+        _auth_secret().encode(), f"{user_id}.{expires_at}".encode(), hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        if int(expires_at) < int(time.time()):
+            return None
+    except ValueError:
+        return None
+    return get_user_by_id(user_id)
 
 
 def update_user_avatar(user_id: str, avatar: str) -> None:

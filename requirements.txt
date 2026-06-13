@@ -9,5 +9,6 @@ opencv-python-headless>=4.9
 torch>=2.2
 torchvision>=0.17
 gradio_client>=1.5
+huggingface_hub>=0.34
+openai>=1.50
 psycopg2-binary>=2.9
-authlib>=1.3

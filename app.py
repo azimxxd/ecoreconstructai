@@ -36,7 +36,10 @@ from utils.free_ai import (
     generate_dashboard_report,
     generate_findings,
 )
+import streamlit.components.v1 as components
+
 from utils.db import (
+    AuthError,
     init_db,
     load_posts,
     load_all_posts,
@@ -44,8 +47,11 @@ from utils.db import (
     toggle_like,
     get_user_liked_posts,
     get_user_posts,
-    upsert_user,
+    register_user,
+    authenticate_user,
     update_user_avatar,
+    make_auth_token,
+    verify_auth_token,
 )
 from utils.models import (
     analyze_eco_status,
@@ -70,7 +76,7 @@ AVATARS = ["🌱", "🌳", "🌻", "🦊", "🐝", "🚲", "🏙", "♻️"]
 
 
 # ===========================================================================
-# Auth helpers — Google OIDC via st.login() (Streamlit ≥ 1.42)
+# Auth helpers — username + password (session-based)
 # ===========================================================================
 
 def get_current_user() -> dict:
@@ -84,23 +90,78 @@ def get_current_user_id() -> str | None:
     return str(uid) if uid else None
 
 
+AUTH_COOKIE = "eco_auth"
+
+
+def _login_user(user: dict) -> None:
+    """Store the user in the session and queue a persistent-login cookie."""
+    st.session_state["db_user"] = user
+    st.session_state["_write_cookie"] = make_auth_token(user["id"])
+
+
+def logout() -> None:
+    """Clear the session and queue cookie removal so reloads stay logged out."""
+    for key in ("db_user", "page"):
+        st.session_state.pop(key, None)
+    st.session_state["_clear_cookie"] = True
+
+
+def _set_auth_cookie(token: str) -> None:
+    """Write the auth cookie on the top-level document via a tiny JS shim."""
+    max_age = 60 * 60 * 24 * 30
+    components.html(
+        f"""<script>
+        window.parent.document.cookie =
+            "{AUTH_COOKIE}={token}; path=/; max-age={max_age}; SameSite=Lax";
+        </script>""",
+        height=0,
+    )
+
+
+def _clear_auth_cookie() -> None:
+    components.html(
+        f"""<script>
+        window.parent.document.cookie =
+            "{AUTH_COOKIE}=; path=/; max-age=0; SameSite=Lax";
+        </script>""",
+        height=0,
+    )
+
+
+def _sync_auth_cookie() -> None:
+    """
+    Flush queued cookie writes/clears. Must run BEFORE any cookie-based session
+    restore so a logout isn't immediately undone by a stale cookie.
+    """
+    if st.session_state.pop("_clear_cookie", False):
+        _clear_auth_cookie()
+        st.session_state["_skip_cookie_restore"] = True
+    token = st.session_state.pop("_write_cookie", None)
+    if token:
+        _set_auth_cookie(token)
+
+
 def _ensure_auth() -> None:
     """
-    Check that the user is logged in. If not, show the login screen and stop.
-    On first login (or each login) upsert the user into our DB and cache the
-    record in st.session_state so we don't query the DB on every rerun.
+    Ensure a user is in the session. If not, try to restore one from the
+    persistent-login cookie; otherwise show the login/register screen and stop.
     """
-    if not st.user.is_logged_in:
-        _render_login_screen()
-        st.stop()
+    if "db_user" not in st.session_state:
+        if st.session_state.pop("_skip_cookie_restore", False):
+            pass  # just logged out — don't restore from the stale cookie
+        else:
+            try:
+                token = st.context.cookies.get(AUTH_COOKIE)
+            except Exception:
+                token = None
+            if token:
+                restored = verify_auth_token(token)
+                if restored:
+                    st.session_state["db_user"] = restored
 
     if "db_user" not in st.session_state:
-        db_user = upsert_user(
-            google_sub=st.user.sub,
-            email=getattr(st.user, "email", None),
-            name=getattr(st.user, "name", None),
-        )
-        st.session_state["db_user"] = db_user
+        _render_login_screen()
+        st.stop()
 
 
 def _render_login_screen() -> None:
@@ -110,8 +171,8 @@ def _render_login_screen() -> None:
         <div style="
             display: flex; flex-direction: column;
             align-items: center; justify-content: center;
-            min-height: 85dvh; text-align: center; padding: 2rem 1.5rem;
-            gap: 1rem;">
+            text-align: center; padding: 2.4rem 1.5rem 1.2rem;
+            gap: .7rem;">
             <div style="
                 font-family: var(--display); font-weight: 900; font-size: 2.2rem;
                 background: var(--grad);
@@ -122,29 +183,84 @@ def _render_login_screen() -> None:
                 letter-spacing: .24em; text-transform: uppercase; color: var(--lime);">
                 // сканер городской экологии
             </div>
-            <p style="color: var(--muted); font-size: .9rem; max-width: 320px;
-                line-height: 1.6; margin-top: .5rem;">
-                Фотографируй серые улицы — ИИ покажет зелёное будущее.<br/>
-                Поддерживай лучшие места города голосами.
+            <p style="color: var(--muted); font-size: .88rem; max-width: 320px;
+                line-height: 1.6; margin: .2rem auto 0;">
+                Фотографируй серые улицы — ИИ покажет зелёное будущее.
             </p>
-            <div style="
-                background: rgba(255,255,255,.04);
-                border: 1px solid var(--line-soft);
-                border-radius: 18px;
-                padding: 1rem 1.2rem;
-                font-size: .8rem; color: var(--muted);
-                max-width: 320px; line-height: 1.55; margin-top: .3rem;">
-                🔒 Аккаунт нужен, чтобы отслеживать твои публикации и голоса.
-                Данные профиля не передаются третьим лицам.
-            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    col_l, col_c, col_r = st.columns([1, 2, 1])
-    with col_c:
-        if st.button("🔑 Войти через Google", type="primary", use_container_width=True):
-            st.login("google")
+
+    tab_login, tab_register = st.tabs(["🔑 Вход", "✦ Регистрация"])
+
+    with tab_login:
+        with st.form("login_form", border=False):
+            login_id = st.text_input(
+                "Имя пользователя или почта",
+                key="login_id",
+                placeholder="ник или email",
+            )
+            login_pw = st.text_input(
+                "Пароль", type="password", key="login_pw", placeholder="••••••••"
+            )
+            if st.form_submit_button("Войти", type="primary"):
+                if not login_id.strip() or not login_pw:
+                    st.warning("Введите имя пользователя и пароль.")
+                else:
+                    try:
+                        user = authenticate_user(login_id, login_pw)
+                        _login_user(user)
+                        st.rerun()
+                    except AuthError as exc:
+                        st.error(str(exc))
+
+    with tab_register:
+        with st.form("register_form", border=False):
+            reg_username = st.text_input(
+                "Имя пользователя", key="reg_username", placeholder="например: eco_almaty"
+            )
+            reg_email = st.text_input(
+                "Почта", key="reg_email", placeholder="you@example.com"
+            )
+            reg_pw = st.text_input(
+                "Пароль", type="password", key="reg_pw", placeholder="минимум 6 символов"
+            )
+            reg_pw2 = st.text_input(
+                "Повтор пароля", type="password", key="reg_pw2", placeholder="••••••••"
+            )
+            if st.form_submit_button("Создать аккаунт", type="primary"):
+                username = reg_username.strip()
+                if len(username) < 3:
+                    st.warning("Имя пользователя — минимум 3 символа.")
+                elif len(reg_pw) < 6:
+                    st.warning("Пароль — минимум 6 символов.")
+                elif reg_pw != reg_pw2:
+                    st.warning("Пароли не совпадают.")
+                else:
+                    try:
+                        user = register_user(username, reg_email, reg_pw)
+                        _login_user(user)
+                        st.session_state["flash"] = "Добро пожаловать в ECO//RE! 🌿"
+                        st.rerun()
+                    except AuthError as exc:
+                        st.error(str(exc))
+
+    st.markdown(
+        """
+        <div style="
+            background: rgba(255,255,255,.04);
+            border: 1px solid var(--line-soft);
+            border-radius: 18px;
+            padding: .9rem 1.1rem; margin-top: 1rem;
+            font-size: .78rem; color: var(--muted);
+            line-height: 1.55; text-align: center;">
+            🔒 Аккаунт нужен, чтобы отслеживать твои публикации и голоса.
+            Пароль хранится в зашифрованном виде.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ===========================================================================
@@ -897,22 +1013,79 @@ def gvi_badge(green_index: float) -> str:
 
 
 def reset_idea_form() -> None:
-    """Clear the camera-page state after a successful publish."""
+    """Clear the camera-page state after a successful publish or exit."""
     for key in (
         "analysis_result",
         "generated_image",
         "original_image",
+        "eco_audit",
         "ai_analysis",
         "appeal_text",
         "analyzed_signature",
+        "confirmed_signature",
     ):
         st.session_state.pop(key, None)
     # Bump the key so camera_input / file_uploader widgets reset themselves.
     st.session_state["uploader_key"] = st.session_state.get("uploader_key", 0) + 1
 
 
+def _camera_dirty() -> bool:
+    """True when the camera page holds confirmed/generated work not yet saved."""
+    return bool(
+        st.session_state.get("confirmed_signature")
+        or st.session_state.get("generated_image")
+    )
+
+
 def goto(page: str) -> None:
+    """Switch pages, guarding an unsaved camera session with a warning dialog."""
+    if (
+        st.session_state.get("page") == "camera"
+        and page != "camera"
+        and _camera_dirty()
+    ):
+        # Defer the switch — render_camera() will surface the confirm dialog.
+        st.session_state["confirm_leave_to"] = page
+        return
     st.session_state["page"] = page
+
+
+def request_leave(target: str) -> None:
+    """Exit-button handler: warn if there is unsaved work, else leave directly."""
+    if _camera_dirty():
+        st.session_state["confirm_leave_to"] = target
+    else:
+        st.session_state["page"] = target
+
+
+# Data-version cache invalidation: bumping this key busts the feed/leaderboard
+# caches for the current session right after a publish or vote, while other
+# sessions pick up changes within the cache TTL.
+def _data_version() -> int:
+    return st.session_state.get("data_version", 0)
+
+
+def _bump_data_version() -> None:
+    st.session_state["data_version"] = st.session_state.get("data_version", 0) + 1
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _feed_cached(version: int, limit: int) -> list[dict]:
+    return load_posts(limit)
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _all_posts_cached(version: int) -> list[dict]:
+    return load_all_posts()
+
+
+ENGINE_LABELS = {
+    "openai": "✨ OpenAI gpt-image",
+    "flux-kontext": "🟢 FLUX.1-Kontext (бесплатно)",
+    "instruct-pix2pix": "🟡 InstructPix2Pix (бесплатно)",
+    "flux-schnell-text": "⚠️ текстовая генерация (без фото)",
+    "none": "⚠️ генерация недоступна",
+}
 
 
 # ===========================================================================
@@ -979,7 +1152,7 @@ def render_feed() -> None:
     )
 
     user_id = get_current_user_id()
-    feed_items = load_posts(limit=20)
+    feed_items = _feed_cached(_data_version(), 20)
 
     if not feed_items:
         st.markdown(
@@ -1016,6 +1189,7 @@ def render_feed() -> None:
                             liked_post_ids.add(item_id)
                         else:
                             liked_post_ids.discard(item_id)
+                        _bump_data_version()
                         st.rerun()
 
 
@@ -1031,18 +1205,69 @@ def render_steps(active: int) -> None:
     st.markdown(f'<div class="steps">{chips}</div>', unsafe_allow_html=True)
 
 
-def render_camera() -> None:
-    db_user = get_current_user()
+@st.dialog("Выйти из режима камеры?")
+def _confirm_leave_dialog() -> None:
+    """Warn that unsaved camera work is lost before leaving the page."""
+    target = st.session_state.get("confirm_leave_to", "feed")
     st.markdown(
-        """
-        <div class="page-head">
-            <div class="kicker">// новое решение</div>
-            <h1>Сканер улицы</h1>
-            <p>Сфоткай серую улицу — ИИ покажет её зелёное будущее</p>
-        </div>
-        """,
+        '<p style="color:var(--text);font-size:.92rem;line-height:1.6;">'
+        "⚠️ <strong>Изменения не сохранятся, если выйти.</strong><br/>"
+        "Сгенерированный зелёный концепт и ИИ-анализ будут потеряны, "
+        "пока вы не опубликуете решение в ленту."
+        "</p>",
         unsafe_allow_html=True,
     )
+    col_stay, col_leave = st.columns(2)
+    with col_stay:
+        if st.button("← Остаться", type="primary", use_container_width=True):
+            st.session_state.pop("confirm_leave_to", None)
+            st.rerun()
+    with col_leave:
+        if st.button("Выйти без сохранения", use_container_width=True):
+            reset_idea_form()
+            st.session_state["page"] = target
+            st.session_state.pop("confirm_leave_to", None)
+            st.rerun()
+
+
+# Make the live camera feel like a full-screen viewfinder.
+CAMERA_CSS = """<style>
+div[data-testid="stCameraInput"] > div { width: 100% !important; }
+div[data-testid="stCameraInput"] video {
+    width: 100% !important;
+    height: 60vh !important;
+    max-height: 60vh !important;
+    object-fit: cover !important;
+    border-radius: 18px;
+    border: 1px solid var(--line);
+    box-shadow: 0 0 0 1px rgba(168,255,96,.12), 0 18px 50px rgba(0,0,0,.5);
+}
+div[data-testid="stCameraInput"] img { border-radius: 18px; }
+</style>"""
+
+
+def render_camera() -> None:
+    # Surface the exit-confirmation dialog when navigation was deferred.
+    if st.session_state.get("confirm_leave_to"):
+        _confirm_leave_dialog()
+
+    st.markdown(CAMERA_CSS, unsafe_allow_html=True)
+
+    head_left, head_right = st.columns([3, 1])
+    with head_left:
+        st.markdown(
+            """
+            <div class="page-head">
+                <div class="kicker">// новое решение</div>
+                <h1>Сканер улицы</h1>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with head_right:
+        st.button(
+            "✕ Выход", key="camera_exit", on_click=request_leave, args=("feed",)
+        )
 
     source_mode = st.segmented_control(
         "Источник фото",
@@ -1084,37 +1309,77 @@ def render_camera() -> None:
             label_visibility="collapsed",
         )
 
-    active_step = 1
-    if photo_file is not None:
-        active_step = (
-            3 if st.session_state.get("location_input", "").strip() else 2
-        )
-    render_steps(active_step)
+    current_sig = (
+        f"{getattr(photo_file, 'name', 'camera')}_{photo_file.size}"
+        if photo_file is not None
+        else None
+    )
+    confirmed_sig = st.session_state.get("confirmed_signature")
 
+    # --- No photo yet --------------------------------------------------------
     if photo_file is None:
+        if confirmed_sig:
+            # The photo was cleared from the widget — drop the stale pipeline.
+            reset_idea_form()
+        render_steps(1)
         st.markdown(
             """
             <div class="eco-card" style="text-align:center;color:var(--muted);">
                 ⬆️ Сделай фото на месте или выбери из галереи —
-                и начнём эко-аудит локации
+                затем подтверди кадр, и начнётся эко-аудит локации
             </div>
             """,
             unsafe_allow_html=True,
         )
         return
 
-    original_image = Image.open(photo_file).convert("RGB")
+    # --- Photo selected but NOT confirmed → preview + confirm gate -----------
+    if confirmed_sig != current_sig:
+        render_steps(1)
+        photo_file.seek(0)
+        preview_image = Image.open(photo_file).convert("RGB")
+        st.image(preview_image, caption="📷 Предпросмотр кадра", width="stretch")
+        st.markdown(
+            """
+            <div class="eco-card" style="
+                border-color: rgba(61,245,200,.3);
+                background: rgba(61,245,200,.05);
+                text-align:center; padding:.8rem 1rem;">
+                Проверь кадр. Если всё хорошо — нажми
+                <strong>«Подтвердить»</strong>, и ИИ запустит анализ и
+                генерацию зелёного концепта.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        col_confirm, col_retake = st.columns([2, 1])
+        with col_confirm:
+            if st.button(
+                "✓ Подтвердить и запустить ИИ",
+                type="primary",
+                use_container_width=True,
+                key="confirm_photo",
+            ):
+                st.session_state["confirmed_signature"] = current_sig
+                st.rerun()
+        with col_retake:
+            if st.button("↺ Другое фото", use_container_width=True, key="retake_photo"):
+                reset_idea_form()
+                st.rerun()
+        return
 
-    # Run the pipelines once per photo, cache in session.
-    file_signature = f"{getattr(photo_file, 'name', 'camera')}_{photo_file.size}"
+    # --- Confirmed → run pipeline once, cached by signature ------------------
+    photo_file.seek(0)
+    original_image = Image.open(photo_file).convert("RGB")
+    file_signature = current_sig
     if st.session_state.get("analyzed_signature") != file_signature:
         # 1) Real image analysis first: YOLOv8 + OpenCV eco-audit.
         with st.spinner("🛰 YOLOv8 анализирует улицу..."):
             eco_audit = eco_audit_safe(original_image)
             green_index = eco_audit["green_view_index"] / 100.0
             masked_image, _ = analyze_eco_status(original_image)
-        # 2) Image-to-image, with a prompt built from the YOLO audit.
-        with st.spinner("🎨 ИИ рисует зелёное будущее по результатам анализа..."):
+        # 2) Image-to-image, with a decay-driven luxury prompt from the audit.
+        with st.spinner("🎨 ИИ превращает улицу в люкс-центр мегаполиса..."):
             generated_image = generate_eco_friendly_view(original_image, eco_audit)
         st.session_state["analyzed_signature"] = file_signature
         st.session_state["original_image"] = original_image
@@ -1126,6 +1391,8 @@ def render_camera() -> None:
     generated_image = st.session_state["generated_image"]
     original_image = st.session_state["original_image"]
     eco_audit = st.session_state["eco_audit"]
+
+    render_steps(3 if st.session_state.get("location_input", "").strip() else 2)
 
     # --- Scan result: GVI ring gauge -------------------------------------
     verdict = (
@@ -1152,6 +1419,31 @@ def render_camera() -> None:
         unsafe_allow_html=True,
     )
 
+    # --- Street Decay Index: the "how rough is this street" score ---------
+    decay = float(eco_audit.get("decay_index", 0.0))
+    decay_label = eco_audit.get("decay_label", "")
+    decay_cls = "low" if decay >= 62 else "mid" if decay >= 42 else "high"
+    st.markdown(
+        f"""
+        <div class="eco-card m-{decay_cls}" style="margin-bottom:1rem;">
+            <div class="tk-meter-head" style="display:flex;justify-content:space-between;
+                font-family:var(--mono);font-size:.6rem;font-weight:700;
+                letter-spacing:.16em;text-transform:uppercase;color:var(--muted);">
+                <span>индекс упадка улицы</span><b style="font-size:.8rem;">{decay:.0f}/100</b>
+            </div>
+            <div class="tk-meter-bar" style="height:6px;border-radius:4px;
+                background:rgba(255,255,255,.12);margin-top:.45rem;overflow:hidden;">
+                <span style="display:block;height:100%;width:{decay:.0f}%;
+                background:linear-gradient(90deg,var(--lime),var(--amber),var(--coral));"></span>
+            </div>
+            <div style="margin-top:.5rem;font-size:.82rem;color:var(--text);">
+                🏚 {html.escape(decay_label)}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # --- Before / analysis / future concept -------------------------------
     col_original, col_masked = st.columns(2)
     with col_original:
@@ -1164,6 +1456,10 @@ def render_camera() -> None:
         unsafe_allow_html=True,
     )
     st.image(generated_image, caption="🎨 Future Green Concept (GenAI)", width="stretch")
+
+    engine = st.session_state.get("last_gen_engine")
+    if engine and engine in ENGINE_LABELS:
+        st.caption(f"Движок генерации: {ENGINE_LABELS[engine]}")
 
     # --- Дисклеймер точности ИИ -------------------------------------------
     st.markdown(
@@ -1197,15 +1493,28 @@ def render_camera() -> None:
     if not free_ai_available():
         st.info("Добавьте HF_API_TOKEN в secrets.toml для ИИ-анализа")
     else:
-        with st.spinner("🤖 ИИ формулирует выводы по данным анализа..."):
-            ai_analysis = generate_findings(
-                eco_audit,
-                location_address.strip() or "адрес не указан",
-            )
-        if ai_analysis is None:
-            st.info("Добавьте HF_API_TOKEN в secrets.toml для ИИ-анализа")
-        else:
-            st.session_state["ai_analysis"] = ai_analysis
+        # Findings run on demand (a button), not on every keystroke — this
+        # keeps the page responsive and avoids repeated LLM calls while typing.
+        analysis_label = (
+            "🔄 Обновить ИИ-анализ"
+            if st.session_state.get("ai_analysis")
+            else "🤖 Запустить ИИ-анализ локации"
+        )
+        if st.button(analysis_label, key="run_findings"):
+            with st.spinner("🤖 ИИ формулирует выводы по данным анализа..."):
+                ai_analysis = generate_findings(
+                    eco_audit,
+                    location_address.strip() or "адрес не указан",
+                )
+            if ai_analysis is None:
+                st.info("Добавьте HF_API_TOKEN в secrets.toml для ИИ-анализа")
+            else:
+                st.session_state["ai_analysis"] = ai_analysis
+                # A fresh analysis invalidates any previously drafted appeal.
+                st.session_state.pop("appeal_text", None)
+
+        ai_analysis = st.session_state.get("ai_analysis")
+        if ai_analysis:
             priority = ai_analysis.get("priority", "средний").lower()
             badge_class = {
                 "высокий": "badge-low",
@@ -1247,6 +1556,10 @@ def render_camera() -> None:
                     st.info("Добавьте HF_API_TOKEN в secrets.toml для ИИ-анализа")
 
             if st.session_state.get("appeal_text"):
+                st.caption(
+                    "В тексте оставлены заполнители в [квадратных скобках] — "
+                    "впишите свои данные (ФИО, телефон, дату) перед отправкой."
+                )
                 st.text_area(
                     "Текст обращения",
                     value=st.session_state["appeal_text"],
@@ -1278,6 +1591,7 @@ def render_camera() -> None:
                 },
             )
             reset_idea_form()
+            _bump_data_version()
             st.session_state["flash"] = "Решение опубликовано в ленту! 🎉"
             st.session_state["page"] = "feed"
             st.rerun()
@@ -1304,7 +1618,7 @@ def render_top() -> None:
         unsafe_allow_html=True,
     )
 
-    all_items = load_all_posts()
+    all_items = _all_posts_cached(_data_version())
     monthly_items = [i for i in all_items if is_current_month(i.get("timestamp", ""))]
     pool = monthly_items
     if not pool and all_items:
@@ -1533,7 +1847,8 @@ def render_profile() -> None:
                     st.rerun()
 
     if st.button("🚪 Выйти из аккаунта", use_container_width=True):
-        st.logout()
+        logout()
+        st.rerun()
 
     st.markdown(
         '<div class="section-title">✦ Мои решения</div>', unsafe_allow_html=True
@@ -1595,8 +1910,9 @@ def render_nav(active_page: str) -> None:
 # ===========================================================================
 # App entry — auth check → page router
 # ===========================================================================
-init_db()          # one-shot pool creation + schema migration
-_ensure_auth()     # redirect to login screen if not authenticated
+init_db()           # one-shot pool creation + schema migration
+_sync_auth_cookie() # flush queued cookie writes/clears (must precede restore)
+_ensure_auth()      # restore session from cookie or show the login screen
 
 st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 

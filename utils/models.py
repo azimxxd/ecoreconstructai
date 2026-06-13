@@ -26,7 +26,6 @@ import base64
 import io
 import os
 import random
-import time
 
 import numpy as np
 import requests
@@ -36,10 +35,6 @@ from PIL import Image, ImageFilter
 # ---------------------------------------------------------------------------
 # Shared helpers and configuration.
 # ---------------------------------------------------------------------------
-
-# Simulated latency range (seconds) so the analysis step feels like real
-# inference.
-_ANALYSIS_DELAY_RANGE = (1.2, 2.2)
 
 # Cap working resolution to keep base64 payloads in the JSON DB lightweight.
 _MAX_SIDE_PX = 1024
@@ -80,7 +75,9 @@ def _normalize(image: Image.Image) -> Image.Image:
 # actually needs instead of a fixed generic string.
 # ---------------------------------------------------------------------------
 
-# HF Spaces (image-to-image), in order of preference.
+# FLUX.1-Kontext-dev model id (used by the Inference Providers router) and the
+# public ZeroGPU Space id (free but quota-limited fallback).
+_KONTEXT_MODEL = "black-forest-labs/FLUX.1-Kontext-dev"
 _KONTEXT_SPACE = "black-forest-labs/FLUX.1-Kontext-dev"
 _PIX2PIX_SPACE = "timbrooks/instruct-pix2pix"
 
@@ -157,66 +154,134 @@ def _scene_to_audit(image: Image.Image) -> dict:
 
 def build_eco_prompt(audit: dict) -> str:
     """
-    Build a tailored, structure-preserving img2img instruction from the eco
-    audit (YOLOv8 + OpenCV metrics from run_eco_audit).
+    Build a dynamic, decay-driven image-editing instruction that turns the
+    photographed street into a premium, world-class downtown boulevard while
+    preserving its structure (camera angle, road layout, building footprints).
 
-    The instruction always tells the model to KEEP the existing buildings,
-    road and composition and only ADD green / sustainable elements — this is
-    what stops the model from doing illogical edits. The specific additions
-    are chosen from the measured metrics: how much asphalt and greenery the
-    scene has, and how many cars YOLO detected.
+    The prompt is composed from the Street Decay Index and the specific weak
+    signals measured by the audit (greenery, asphalt, vehicles, darkness,
+    drabness, clutter), so the more derelict the street, the more ambitious and
+    explicit the transformation — a true "ghetto → luxury" upgrade. Tuned for
+    OpenAI gpt-image-* edits and FLUX.1-Kontext alike: imperative edits plus
+    hard structure-preservation rules so the model restyles rather than
+    inventing a new scene.
     """
-    green = float(audit.get("green_view_index", 0.0))      # 0–100
-    asphalt = float(audit.get("asphalt_coverage", 0.0))    # 0–100
+    green = float(audit.get("green_view_index", 0.0))       # 0–100, higher better
+    asphalt = float(audit.get("asphalt_coverage", 0.0))     # 0–100
+    cars = int(audit.get("cars_detected", 0))
+    brightness = float(audit.get("brightness", 150.0))      # 0–255
+    colorfulness = float(audit.get("colorfulness", 40.0))   # 0–~110
+    clutter = float(audit.get("clutter", 8.0))              # 0–100 edge density
+    sdi = float(audit.get("decay_index", 50.0))             # 0–100, higher worse
 
-    # --- Tidy-up / renovation goals (always), not just greenery. ----------
-    improvements: list[str] = [
-        "straighten and repair any crooked, broken or chipped curbs, kerbstones "
-        "and pavement edges so they are clean, even and well-aligned",
-        "repair and straighten damaged or leaning fences, railings, bollards and "
-        "barriers, and give them a neat freshly-painted finish",
-        "repaint dirty, cracked, stained or peeling building walls and facades in "
-        "clean, tidy, pleasant neutral colours and fix the broken pavement",
-    ]
-
-    # --- Greenery goals, scaled to how barren the scene is. ---------------
-    if green < 15:
-        green_goal = (
-            "plant several new mature street trees and add tidy grass strips, "
-            "flower beds and planters on the sidewalks and on the verges between "
-            "the road and the buildings"
+    # --- Ambition + reference scaled to how derelict the street is. -------
+    if sdi >= 62:
+        opener = (
+            "Completely transform this rundown, neglected, low-income street "
+            "into a breathtaking, ultra-premium downtown boulevard worthy of the "
+            "most prestigious district of a world-class global metropolis "
+            "(in the spirit of the finest streets of Singapore, Dubai, Tokyo or "
+            "Paris). Make a dramatic before→after glow-up while keeping it the "
+            "SAME street"
+        )
+    elif sdi >= 42:
+        opener = (
+            "Significantly upgrade this tired, run-down street into a polished, "
+            "upscale downtown boulevard of a modern, prosperous city — a clear, "
+            "impressive glow-up while keeping it the SAME street"
+        )
+    elif sdi >= 24:
+        opener = (
+            "Elevate this ordinary grey street into a clean, green and upscale "
+            "city boulevard, refined and well-maintained, while keeping it the "
+            "SAME street"
         )
     else:
-        green_goal = (
-            "add a few extra trees, shrubs and flower planters on the sidewalks "
-            "and verges to complement the existing greenery"
+        opener = (
+            "Refine and elevate this already decent street into a premium, "
+            "pristine, beautifully landscaped version of itself, keeping it the "
+            "SAME street"
         )
-    improvements.append(green_goal)
 
-    # Lots of bare paving → green the roadsides, NOT the carriageway itself.
+    # --- Targeted fixes, switched on by the weak signals. ----------------
+    fixes: list[str] = []
+
+    if green < 25:
+        fixes.append(
+            "plant abundant lush mature street trees forming a green canopy "
+            "along both sides, with manicured lawns, hedges, flower beds and "
+            "elegant planters on the verges and widened sidewalks"
+        )
+    else:
+        fixes.append(
+            "enrich the greenery with extra mature trees, manicured hedges, "
+            "flower beds and tasteful planters along the sidewalks"
+        )
+
     if asphalt > 40:
-        improvements.append(
-            "line the roadsides with trees and turn any empty bare ground next "
-            "to the road into a small tidy pocket park"
+        fixes.append(
+            "replace cracked tarmac edges and bare ground beside the road with "
+            "wide pedestrian sidewalks in designer stone/granite paving and a "
+            "landscaped central median or tree line"
+        )
+    else:
+        fixes.append(
+            "resurface the sidewalks in clean designer stone/granite paving and "
+            "repair and repaint the curbs so every edge is crisp"
         )
 
-    improvements.append(
-        "add a few solar panels on the rooftops and clean wooden benches on "
-        "the sidewalks"
+    if brightness < 120:
+        fixes.append(
+            "relight the whole scene into bright, clear, sunny daylight and add "
+            "elegant boulevard street lamps with warm, even ambient lighting"
+        )
+    else:
+        fixes.append(
+            "add elegant boulevard street lamps and warm pedestrian lighting for "
+            "a refined evening-ready feel"
+        )
+
+    if colorfulness < 30:
+        fixes.append(
+            "renovate the building facades with rich premium materials — clean "
+            "natural stone, warm wood, glass and tasteful colour accents — "
+            "replacing the dull grey monotony"
+        )
+    else:
+        fixes.append(
+            "renovate and clean the building facades with premium materials and "
+            "tasteful, harmonious colours"
+        )
+
+    if clutter > 12:
+        fixes.append(
+            "remove all visual clutter — tangled overhead wires, junk, rubbish, "
+            "peeling posters, broken signage and random debris — for a clean, "
+            "orderly streetscape"
+        )
+
+    if cars >= 2:
+        fixes.append(
+            "tidy the parked cars into neat order and reclaim space for a "
+            "generous, people-friendly pedestrian promenade"
+        )
+
+    # Always-on luxury finishing touches.
+    fixes.append(
+        "add upscale finishing touches: designer benches, modern planters, "
+        "tasteful boutique storefronts, clean glass and spotless surfaces"
     )
 
     instruction = (
-        "Renovate and beautify this SAME street into a tidy, well-maintained, "
-        "green and eco-friendly version of itself: " + "; ".join(improvements)
-        + ". "
-        "VERY IMPORTANT: keep the asphalt road and driving lanes, the cars and "
-        "the sky exactly as they are — do NOT place trees, grass or anything on "
-        "the road surface or in the sky, and do not turn the road into a park or "
-        "alley. Make changes only on the sidewalks, roadside verges, empty "
-        "ground, fences and building facades. Keep the road layout, camera "
-        "angle, perspective and overall composition unchanged. "
-        "Photorealistic, natural soft daylight, realistic proportions, "
-        "highly detailed."
+        opener + ". " + "; ".join(fixes) + ". "
+        "STRICT STRUCTURE RULES: keep the EXACT same camera angle, perspective, "
+        "vanishing point and framing; keep the road in the same position, width "
+        "and direction; keep every building in its original location, footprint, "
+        "height and count — renovate them, do not move, remove or add buildings; "
+        "do not place trees, plants or objects on the road surface. This must be "
+        "recognisably the same street, only beautifully transformed. "
+        "Ultra-photorealistic architectural visualization, bright clear daylight "
+        "or warm golden hour, crisp, high detail, magazine-quality."
     )
     return instruction
 
@@ -270,15 +335,59 @@ def _result_to_image(result: object) -> Image.Image | None:
     return None
 
 
+def _try_kontext_router(
+    image: Image.Image, prompt: str, hf_token: str
+) -> Image.Image | None:
+    """
+    Primary path — FLUX.1-Kontext-dev image editing via the Hugging Face
+    Inference Providers router (``InferenceClient(provider="auto")``).
+
+    This is the reliable high-quality route: unlike the public ZeroGPU Space
+    (which only grants ~60s of GPU per day and is almost always exhausted), the
+    router dispatches to a hosted provider (fal-ai / replicate / …) and is
+    billed against the token's included monthly inference credits. Kontext is
+    image-conditioned, so it actually reads the photo and preserves the road,
+    buildings and perspective while landscaping the sidewalks.
+
+    Returns None on any failure (e.g. credits exhausted) so the caller can fall
+    back to the free tiers.
+    """
+    try:
+        from huggingface_hub import InferenceClient
+    except ImportError:
+        print("[ROUTER] huggingface_hub not installed — pip install huggingface_hub")
+        return None
+
+    buf = io.BytesIO()
+    _normalize(image).save(buf, format="JPEG", quality=92)
+    try:
+        print("[ROUTER] FLUX.1-Kontext via Inference Providers (provider=auto)...")
+        client = InferenceClient(provider="auto", api_key=hf_token)
+        generated = client.image_to_image(
+            buf.getvalue(),
+            prompt=prompt,
+            model=_KONTEXT_MODEL,
+        )
+        if isinstance(generated, Image.Image):
+            print("[ROUTER] Success")
+            return generated.convert("RGB")
+        print("[ROUTER] returned no usable image")
+    except Exception as exc:
+        print(f"[ROUTER] failed: {type(exc).__name__}: {exc}")
+    return None
+
+
 def _try_flux_kontext(
     image: Image.Image, prompt: str, hf_token: str
 ) -> Image.Image | None:
     """
-    Primary path — FLUX.1-Kontext-dev instruction editing via the Gradio Client.
+    Secondary path — FLUX.1-Kontext-dev instruction editing via the Gradio
+    Client (public ZeroGPU Space).
 
-    Highest quality and structure-preserving, but the official ZeroGPU Space
-    needs an authenticated HF token (free tier has a daily GPU quota). On quota
-    errors / failures this returns None so the caller can fall back.
+    Same model as the router path but free; however the official Space only
+    grants ~60s of ZeroGPU per day on the free tier, so it is usually quota
+    exhausted. Kept as a no-cost fallback for when the router credits run out.
+    On quota errors / failures this returns None so the caller can fall back.
     """
     try:
         from gradio_client import Client, handle_file
@@ -523,20 +632,33 @@ def _protect_scene(
         return generated
 
 
+def _set_engine(name: str) -> None:
+    """Record which image engine produced the result, for the UI badge."""
+    try:
+        st.session_state["last_gen_engine"] = name
+    except Exception:
+        pass
+
+
 def generate_eco_friendly_view(
     image: Image.Image, audit: dict | None = None
 ) -> Image.Image:
     """
-    Generate a "green future" version of the user's photo.
+    Generate a premium "green future" version of the user's photo.
 
     Pipeline:
       1. The edit instruction is built from the YOLOv8 + OpenCV ``audit``
-         (run_eco_audit), grounded in measured greenery / asphalt / cars.
-      2. A 3-tier image generation chain runs (best → last resort):
-           a. FLUX.1-Kontext-dev — high-quality instruction editing. Needs token.
-           b. InstructPix2Pix — anonymous free fallback, lower quality.
-           c. FLUX.1-schnell text-to-image — last resort, does NOT use the photo.
-      3. For the two image-to-image tiers, semantic segmentation restores the
+         (run_eco_audit), scaled by the Street Decay Index so derelict streets
+         get a full luxury rebuild.
+      2. Tier 0 — OpenAI image model (gpt-image-*) on the project key, the
+         primary high-quality engine when ``OPENAI_API_KEY`` is configured.
+      3. Otherwise (or on failure) a 4-tier free chain runs (best → last resort):
+           a. FLUX.1-Kontext-dev via the Inference Providers router — reliable,
+              needs HF token + inference credits.
+           b. FLUX.1-Kontext-dev via the free ZeroGPU Space — usually quota out.
+           c. InstructPix2Pix — anonymous free fallback, lower quality.
+           d. FLUX.1-schnell text-to-image — last resort, does NOT use the photo.
+      4. For the weak image-to-image tier, semantic segmentation restores the
          original road / vehicles / people so the carriageway never gets
          turned into greenery (see _protect_scene).
 
@@ -546,20 +668,43 @@ def generate_eco_friendly_view(
     if audit is None:
         audit = _scene_to_audit(image)
     prompt = build_eco_prompt(audit)
+
+    # --- Tier 0: OpenAI image model on the project key (primary) ---
+    from utils.openai_gen import generate_eco_view_openai, openai_available
+
+    if openai_available():
+        result = generate_eco_view_openai(image, prompt)
+        if result is not None:
+            _set_engine("openai")
+            return result
+
     hf_token = _get_secret("HF_API_TOKEN")
 
-    # --- Tier 1: FLUX.1-Kontext (best, needs token) ---
+    # --- Tier 1: FLUX.1-Kontext via Inference Providers router (best) ---
+    # Kontext is image-conditioned and preserves the road / geometry natively,
+    # so no segmentation re-paste is needed (it only adds blending seams here).
+    if hf_token:
+        result = _try_kontext_router(image, prompt, hf_token)
+        if result is not None:
+            _set_engine("flux-kontext")
+            return result
+
+    # --- Tier 2: FLUX.1-Kontext via free ZeroGPU Space (often quota-limited) ---
     if hf_token:
         result = _try_flux_kontext(image, prompt, hf_token)
         if result is not None:
-            return _protect_scene(image, result, hf_token)
+            _set_engine("flux-kontext")
+            return result
 
-    # --- Tier 2: InstructPix2Pix (anonymous, free) ---
+    # --- Tier 3: InstructPix2Pix (anonymous, free, weaker) ---
+    # This tier does NOT reliably preserve the road, so restore the original
+    # carriageway / vehicles / people with the segmentation mask.
     result = _try_instruct_pix2pix(image, prompt)
     if result is not None:
+        _set_engine("instruct-pix2pix")
         return _protect_scene(image, result, hf_token)
 
-    # --- Tier 3: text-to-image fallback (ignores the photo) ---
+    # --- Tier 4: text-to-image fallback (ignores the photo) ---
     if hf_token:
         st.info(
             "⚠️ Img2img модели недоступны (возможно, исчерпана дневная квота "
@@ -568,12 +713,14 @@ def generate_eco_friendly_view(
         )
         result = _try_txt2img_fallback(hf_token)
         if result is not None:
+            _set_engine("flux-schnell-text")
             return result
 
     st.error(
         "Не удалось сгенерировать изображение. "
         "Попробуйте позже — бесплатный GPU может быть перегружен."
     )
+    _set_engine("none")
     return image
 
 
@@ -607,6 +754,118 @@ def _get_yolo_model():
     return _yolo_model
 
 
+# ---------------------------------------------------------------------------
+# Street Decay Index (SDI) — the "how rough is this street" score.
+#
+# A composite 0–100 score (higher = more derelict) blended from cheap, fast
+# image signals — no extra ML. It drives how ambitious the beautification
+# prompt is, so a genuine slum gets a full luxury rebuild while a decent street
+# only gets a premium polish. Signals:
+#   - greenery    (less green        -> worse)   weight 0.26
+#   - asphalt     (more bare paving  -> worse)   weight 0.16
+#   - vehicles    (more parked cars  -> worse)   weight 0.10
+#   - darkness    (dim / gloomy      -> worse)   weight 0.16
+#   - drabness    (low colourfulness -> worse)   weight 0.18
+#   - clutter     (busy edges/mess   -> worse)   weight 0.14
+# ---------------------------------------------------------------------------
+def _image_quality_metrics(rgb_array: np.ndarray) -> dict[str, float]:
+    """
+    Cheap numpy perceptual metrics from an RGB uint8/float array:
+        brightness   : mean luminance, 0–255 (low = gloomy).
+        colorfulness : Hasler–Süsstrunk colourfulness, ~0–110 (low = drab grey).
+        clutter      : gradient-edge density %, 0–100 (high = busy/messy).
+    Works without OpenCV so both audit paths can share it.
+    """
+    arr = np.asarray(rgb_array, dtype=np.float32)
+    red, green, blue = arr[..., 0], arr[..., 1], arr[..., 2]
+
+    # Perceptual brightness (Rec. 601 luma).
+    brightness = float(0.299 * red.mean() + 0.587 * green.mean() + 0.114 * blue.mean())
+
+    # Hasler–Süsstrunk colourfulness.
+    rg = red - green
+    yb = 0.5 * (red + green) - blue
+    colorfulness = float(
+        np.sqrt(rg.std() ** 2 + yb.std() ** 2)
+        + 0.3 * np.sqrt(rg.mean() ** 2 + yb.mean() ** 2)
+    )
+
+    # Edge density as a clutter proxy (numpy gradient magnitude threshold).
+    gray = arr.mean(axis=-1)
+    gy = np.abs(np.diff(gray, axis=0))
+    gx = np.abs(np.diff(gray, axis=1))
+    edges = (gy[:, :-1] + gx[:-1, :]) > 36.0
+    clutter = float(edges.mean() * 100.0)
+
+    return {
+        "brightness": round(brightness, 1),
+        "colorfulness": round(colorfulness, 1),
+        "clutter": round(clutter, 1),
+    }
+
+
+def _clamp01(value: float) -> float:
+    return float(max(0.0, min(1.0, value)))
+
+
+def compute_decay_index(
+    green: float, asphalt: float, cars: int,
+    brightness: float, colorfulness: float, clutter: float,
+) -> tuple[float, str, str]:
+    """
+    Blend the signals into the Street Decay Index.
+
+    Returns (decay_index 0–100, tier_key, human_label_ru).
+    """
+    bad_green = _clamp01((30.0 - green) / 30.0)
+    bad_asphalt = _clamp01((asphalt - 25.0) / 55.0)
+    bad_cars = _clamp01(cars / 8.0)
+    bad_dark = _clamp01((150.0 - brightness) / 110.0)
+    bad_drab = _clamp01((40.0 - colorfulness) / 40.0)
+    bad_clutter = _clamp01((clutter - 7.0) / 18.0)
+
+    sdi = 100.0 * (
+        0.26 * bad_green
+        + 0.16 * bad_asphalt
+        + 0.10 * bad_cars
+        + 0.16 * bad_dark
+        + 0.18 * bad_drab
+        + 0.14 * bad_clutter
+    )
+    sdi = round(sdi, 1)
+
+    if sdi >= 62:
+        return sdi, "slum", "Трущобы — нужен полный люкс-ребилд"
+    if sdi >= 42:
+        return sdi, "rundown", "Запущенная улица"
+    if sdi >= 24:
+        return sdi, "plain", "Обычная серая улица"
+    return sdi, "decent", "Приличная улица"
+
+
+def _decay_flaws(
+    green: float, asphalt: float, cars: int,
+    brightness: float, colorfulness: float, clutter: float,
+) -> list[str]:
+    """Human-readable (RU) flaw list derived from the measured signals."""
+    flaws: list[str] = []
+    if green < 12:
+        flaws.append("Почти полное отсутствие зелени и деревьев — нет тени и воздуха.")
+    elif green < 25:
+        flaws.append("Мало озеленения, район выглядит голым и серым.")
+    if asphalt > 45:
+        flaws.append("Огромные площади асфальта и бетона (эффект теплового острова).")
+    if cars >= 2:
+        flaws.append("Пространство задавлено припаркованными машинами.")
+    if brightness < 110:
+        flaws.append("Темная, мрачная, плохо освещённая среда.")
+    if colorfulness < 28:
+        flaws.append("Унылая серая палитра без цвета и характера.")
+    if clutter > 14:
+        flaws.append("Визуальный мусор: провода, хаотичные вывески, грязь.")
+    return flaws
+
+
 def analyze_eco_status(image: Image.Image) -> tuple[Image.Image, float]:
     """
     MOCK eco-audit of a street photo.
@@ -638,8 +897,6 @@ def analyze_eco_status(image: Image.Image) -> tuple[Image.Image, float]:
        brightness heuristic below.
     -----------------------------------------------------------------------
     """
-    time.sleep(random.uniform(*_ANALYSIS_DELAY_RANGE))
-
     base_image = _normalize(image)
     pixels = np.asarray(base_image, dtype=np.float32)
 
@@ -721,22 +978,20 @@ def run_eco_audit(pil_image: Image.Image) -> dict:
             if int(class_id) in _VEHICLE_CLASS_IDS:
                 cars_detected += 1
 
+    # --- 6) Perceptual metrics + Street Decay Index. ----------------------
+    metrics = _image_quality_metrics(rgb_array)
+    decay_index, decay_tier, decay_label = compute_decay_index(
+        green_view_index, asphalt_coverage, cars_detected,
+        metrics["brightness"], metrics["colorfulness"], metrics["clutter"],
+    )
+
     # --- Derived verdicts. ------------------------------------------------
     urban_heat_risk = "Критический" if asphalt_coverage > 45 else "Низкий"
 
-    critical_flaws: list[str] = []
-    if green_view_index < 10:
-        critical_flaws.append(
-            "Критический недостаток деревьев: полное отсутствие естественной тени."
-        )
-    if asphalt_coverage > 45:
-        critical_flaws.append(
-            "Огромные площади раскаленного бетона и асфальта (эффект теплового острова)."
-        )
-    if cars_detected >= 2:
-        critical_flaws.append(
-            "Пешеходное пространство агрессивно подавлено припаркованными авто."
-        )
+    critical_flaws = _decay_flaws(
+        green_view_index, asphalt_coverage, cars_detected,
+        metrics["brightness"], metrics["colorfulness"], metrics["clutter"],
+    )
 
     psychological_impact = (
         "Атмосфера вызывает стресс: серая, агрессивная и неприветливая среда."
@@ -748,6 +1003,12 @@ def run_eco_audit(pil_image: Image.Image) -> dict:
         "green_view_index": green_view_index,
         "asphalt_coverage": asphalt_coverage,
         "cars_detected": cars_detected,
+        "brightness": metrics["brightness"],
+        "colorfulness": metrics["colorfulness"],
+        "clutter": metrics["clutter"],
+        "decay_index": decay_index,
+        "decay_tier": decay_tier,
+        "decay_label": decay_label,
         "urban_heat_risk": urban_heat_risk,
         "critical_flaws": critical_flaws,
         "psychological_impact": psychological_impact,
@@ -760,20 +1021,22 @@ def _colour_only_audit(pil_image: Image.Image) -> dict:
     Pure-numpy eco-audit (no OpenCV / YOLO) used when the ML stack is not
     available. Same shape as run_eco_audit() but cannot detect cars.
     """
+    normalized = _normalize(pil_image)
     scene = _analyze_scene(pil_image)
     green_view_index = round(scene["greenery"] * 100.0, 1)
     asphalt_coverage = round(scene["hardscape"] * 100.0, 1)
 
+    metrics = _image_quality_metrics(np.asarray(normalized))
+    decay_index, decay_tier, decay_label = compute_decay_index(
+        green_view_index, asphalt_coverage, 0,
+        metrics["brightness"], metrics["colorfulness"], metrics["clutter"],
+    )
+
     urban_heat_risk = "Критический" if asphalt_coverage > 45 else "Низкий"
-    critical_flaws: list[str] = []
-    if green_view_index < 10:
-        critical_flaws.append(
-            "Критический недостаток деревьев: полное отсутствие естественной тени."
-        )
-    if asphalt_coverage > 45:
-        critical_flaws.append(
-            "Огромные площади раскаленного бетона и асфальта (эффект теплового острова)."
-        )
+    critical_flaws = _decay_flaws(
+        green_view_index, asphalt_coverage, 0,
+        metrics["brightness"], metrics["colorfulness"], metrics["clutter"],
+    )
     psychological_impact = (
         "Атмосфера вызывает стресс: серая, агрессивная и неприветливая среда."
         if len(critical_flaws) >= 2
@@ -783,6 +1046,12 @@ def _colour_only_audit(pil_image: Image.Image) -> dict:
         "green_view_index": green_view_index,
         "asphalt_coverage": asphalt_coverage,
         "cars_detected": 0,
+        "brightness": metrics["brightness"],
+        "colorfulness": metrics["colorfulness"],
+        "clutter": metrics["clutter"],
+        "decay_index": decay_index,
+        "decay_tier": decay_tier,
+        "decay_label": decay_label,
         "urban_heat_risk": urban_heat_risk,
         "critical_flaws": critical_flaws,
         "psychological_impact": psychological_impact,
