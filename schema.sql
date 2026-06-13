@@ -2,13 +2,19 @@
 -- Запустить в SQL Editor Supabase (Project → SQL Editor → New query).
 
 CREATE TABLE IF NOT EXISTS users (
-    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    google_sub  TEXT        UNIQUE NOT NULL,
-    email       TEXT,
-    name        TEXT,
-    avatar      TEXT        NOT NULL DEFAULT '🌱',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    username      TEXT,
+    password_hash TEXT,                 -- PBKDF2-HMAC-SHA256 (salt_hex$digest_hex)
+    google_sub    TEXT,                 -- nullable: legacy/Google rows only
+    email         TEXT,
+    name          TEXT,
+    avatar        TEXT        NOT NULL DEFAULT '🌱',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Имя пользователя уникально без учёта регистра.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username
+    ON users (lower(username)) WHERE username IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS posts (
     id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
