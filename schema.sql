@@ -37,8 +37,26 @@ CREATE TABLE IF NOT EXISTS likes (
     PRIMARY KEY (user_id, post_id)
 );
 
+CREATE TABLE IF NOT EXISTS comments (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    post_id     UUID        NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    content     TEXT        NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS follows (
+    follower_id  UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    following_id UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (follower_id, following_id)
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_posts_created_desc ON posts(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_user         ON posts(user_id);
 CREATE INDEX IF NOT EXISTS idx_likes_user         ON likes(user_id);
 CREATE INDEX IF NOT EXISTS idx_likes_post         ON likes(post_id);
+CREATE INDEX IF NOT EXISTS idx_comments_post      ON comments(post_id);
+CREATE INDEX IF NOT EXISTS idx_follows_follower   ON follows(follower_id);
+CREATE INDEX IF NOT EXISTS idx_follows_following  ON follows(following_id);

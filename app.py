@@ -1611,10 +1611,27 @@ div[class*="st-key-share_"] .stButton > button:hover {
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def pil_to_base64(image: Image.Image) -> str:
-    """Encode a PIL image as a base64 PNG string for JSON storage."""
+def pil_to_base64(
+    image: Image.Image, max_side: int = 1280, quality: int = 82
+) -> str:
+    """
+    Downscale + JPEG-encode a PIL image as base64 for compact DB storage.
+
+    Photos used to be stored as full-resolution PNG (tens of MB each), which is
+    far too large to ship over the Supabase connection — pulling a feed of them
+    tore the connection down. Capping the longest side at ``max_side`` and using
+    JPEG keeps each image to tens of KB while staying visually clean.
+    """
+    img = image.convert("RGB")
+    w, h = img.size
+    longest = max(w, h)
+    if longest > max_side:
+        scale = max_side / float(longest)
+        img = img.resize(
+            (max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS
+        )
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG", optimize=True)
+    img.save(buffer, format="JPEG", quality=quality, optimize=True)
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
@@ -1777,16 +1794,16 @@ def feed_card_html(item: dict) -> str:
     slides = ""
     if generated_b64:
         slides += (
-            f'<div class="tk-slide"><img src="data:image/png;base64,{generated_b64}" alt=""/>'
+            f'<div class="tk-slide"><img src="data:image/jpeg;base64,{generated_b64}" alt=""/>'
             f'<div class="tk-num">01/{total:02d}</div></div>'
         )
         slides += (
-            f'<div class="tk-slide"><img src="data:image/png;base64,{original_b64}" alt=""/>'
+            f'<div class="tk-slide"><img src="data:image/jpeg;base64,{original_b64}" alt=""/>'
             f'<div class="tk-num">02/{total:02d}</div></div>'
         )
     else:
         slides += (
-            f'<div class="tk-slide"><img src="data:image/png;base64,{original_b64}" alt=""/>'
+            f'<div class="tk-slide"><img src="data:image/jpeg;base64,{original_b64}" alt=""/>'
             f'<div class="tk-num">01/{total:02d}</div></div>'
         )
 
@@ -2413,7 +2430,7 @@ def render_camera() -> None:
 # ===========================================================================
 def _thumb_src(item: dict) -> str:
     encoded = item.get("image_generated") or item.get("image_original") or ""
-    return f"data:image/png;base64,{encoded}"
+    return f"data:image/jpeg;base64,{encoded}"
 
 
 def render_top() -> None:
