@@ -174,33 +174,36 @@ def build_eco_prompt(audit: dict) -> str:
     clutter = float(audit.get("clutter", 8.0))              # 0–100 edge density
     sdi = float(audit.get("decay_index", 50.0))             # 0–100, higher worse
 
-    # --- Ambition + reference scaled to how derelict the street is. -------
+    # --- Ambition scaled to how derelict the place is. -------------------
+    # The opener deliberately talks about "this place / this exact spot"
+    # rather than a "street" or "boulevard": the photo may be a courtyard, a
+    # yard, an alley or a square, and we must NOT reframe it as a road. The
+    # job is a realistic clean-up + greening of whatever the place already is,
+    # not a redesign into a different kind of space.
     if sdi >= 62:
         opener = (
-            "Completely transform this rundown, neglected, low-income street "
-            "into a breathtaking, ultra-premium downtown boulevard worthy of the "
-            "most prestigious district of a world-class global metropolis "
-            "(in the spirit of the finest streets of Singapore, Dubai, Tokyo or "
-            "Paris). Make a dramatic before→after glow-up while keeping it the "
-            "SAME street"
+            "Renovate and beautify this rundown, neglected place into a clean, "
+            "well-kept, green version of itself — a believable before→after "
+            "improvement that keeps it the EXACT same place and the same kind "
+            "of space"
         )
     elif sdi >= 42:
         opener = (
-            "Significantly upgrade this tired, run-down street into a polished, "
-            "upscale downtown boulevard of a modern, prosperous city — a clear, "
-            "impressive glow-up while keeping it the SAME street"
+            "Tidy and upgrade this tired, run-down place into a clean, "
+            "well-maintained, greener version of itself, keeping it the EXACT "
+            "same place and the same kind of space"
         )
     elif sdi >= 24:
         opener = (
-            "Elevate this ordinary grey street into a clean, green and upscale "
-            "city boulevard, refined and well-maintained, while keeping it the "
-            "SAME street"
+            "Refresh this ordinary, grey place into a clean, green and "
+            "well-kept version of itself, keeping it the EXACT same place and "
+            "the same kind of space"
         )
     else:
         opener = (
-            "Refine and elevate this already decent street into a premium, "
-            "pristine, beautifully landscaped version of itself, keeping it the "
-            "SAME street"
+            "Gently polish this already decent place into a clean, tidy, "
+            "well-landscaped version of itself, keeping it the EXACT same place "
+            "and the same kind of space"
         )
 
     # --- Targeted fixes, switched on by the weak signals. ----------------
@@ -208,80 +211,86 @@ def build_eco_prompt(audit: dict) -> str:
 
     if green < 25:
         fixes.append(
-            "plant abundant lush mature street trees forming a green canopy "
-            "along both sides, with manicured lawns, hedges, flower beds and "
-            "elegant planters on the verges and widened sidewalks"
+            "add mature trees, hedges, lawns, flower beds and planters wherever "
+            "greenery would realistically fit — along the existing edges, verges "
+            "and unused bare patches — without covering the existing walkable or "
+            "drivable surfaces"
         )
     else:
         fixes.append(
-            "enrich the greenery with extra mature trees, manicured hedges, "
-            "flower beds and tasteful planters along the sidewalks"
+            "enrich the existing greenery with a few extra healthy trees, "
+            "trimmed hedges, flower beds and tasteful planters in the spots that "
+            "already have plants or bare verges"
         )
 
     if asphalt > 40:
         fixes.append(
-            "replace cracked tarmac edges and bare ground beside the road with "
-            "wide pedestrian sidewalks in designer stone/granite paving and a "
-            "landscaped central median or tree line"
+            "repair the cracked, broken paving and clean up the bare ground, "
+            "resurfacing the existing ground with tidy paving of the same kind, "
+            "keeping the existing surface where it already is"
         )
     else:
         fixes.append(
-            "resurface the sidewalks in clean designer stone/granite paving and "
-            "repair and repaint the curbs so every edge is crisp"
+            "repair and clean the existing paving and tidy the curbs and edges "
+            "so everything looks well-maintained"
         )
 
     if brightness < 120:
         fixes.append(
-            "relight the whole scene into bright, clear, sunny daylight and add "
-            "elegant boulevard street lamps with warm, even ambient lighting"
+            "even out the lighting into clear, natural daylight while keeping "
+            "the original time of day and weather plausible"
         )
     else:
         fixes.append(
-            "add elegant boulevard street lamps and warm pedestrian lighting for "
-            "a refined evening-ready feel"
+            "keep the natural daylight, just cleaner and clearer"
         )
 
     if colorfulness < 30:
         fixes.append(
-            "renovate the building facades with rich premium materials — clean "
-            "natural stone, warm wood, glass and tasteful colour accents — "
-            "replacing the dull grey monotony"
+            "clean and repair the existing building facades with fresh, tidy "
+            "finishes in natural, harmonious colours, keeping their original "
+            "materials and character"
         )
     else:
         fixes.append(
-            "renovate and clean the building facades with premium materials and "
-            "tasteful, harmonious colours"
+            "clean and repair the existing building facades, keeping their "
+            "original materials, colours and character"
         )
 
     if clutter > 12:
         fixes.append(
-            "remove all visual clutter — tangled overhead wires, junk, rubbish, "
-            "peeling posters, broken signage and random debris — for a clean, "
-            "orderly streetscape"
+            "remove obvious mess — rubbish, junk, debris, peeling posters and "
+            "broken signage — for a clean, orderly look, without removing "
+            "functional fixtures"
         )
 
     if cars >= 2:
         fixes.append(
-            "tidy the parked cars into neat order and reclaim space for a "
-            "generous, people-friendly pedestrian promenade"
+            "tidy the parked cars into neat order in their existing parking "
+            "spots, without removing the parking area"
         )
 
-    # Always-on luxury finishing touches.
+    # Always-on, modest finishing touches.
     fixes.append(
-        "add upscale finishing touches: designer benches, modern planters, "
-        "tasteful boutique storefronts, clean glass and spotless surfaces"
+        "add a few tasteful, realistic touches that suit this place: tidy "
+        "benches, planters and clean surfaces"
     )
 
     instruction = (
         opener + ". " + "; ".join(fixes) + ". "
-        "STRICT STRUCTURE RULES: keep the EXACT same camera angle, perspective, "
-        "vanishing point and framing; keep the road in the same position, width "
-        "and direction; keep every building in its original location, footprint, "
-        "height and count — renovate them, do not move, remove or add buildings; "
-        "do not place trees, plants or objects on the road surface. This must be "
-        "recognisably the same street, only beautifully transformed. "
-        "Ultra-photorealistic architectural visualization, bright clear daylight "
-        "or warm golden hour, crisp, high detail, magazine-quality."
+        "STRICT RULES — this is a realistic clean-up, NOT a redesign: do not "
+        "change the type of place — a courtyard stays a courtyard, a yard stays "
+        "a yard, an alley stays an alley, a road stays a road; never invent a "
+        "new road, carriageway, traffic lane, median or promenade that is not "
+        "already there. Keep the EXACT same camera angle, perspective, vanishing "
+        "point and framing; keep all ground surfaces (roads, paths, parking, "
+        "yards) in their original position, shape and purpose; keep every "
+        "building in its original location, footprint, height and count — clean "
+        "and repair them, do not move, remove or add buildings; do not place "
+        "trees, plants or objects on top of drivable or walkable surfaces. The "
+        "result must be unmistakably the SAME place from the SAME photo, only "
+        "cleaner, greener and well-maintained. Photorealistic, natural, "
+        "believable, true to the original scene — not a stylised render."
     )
     return instruction
 
